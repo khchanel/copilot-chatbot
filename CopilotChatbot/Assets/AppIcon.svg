@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Copilot Chatbot icon">
+  <defs>
+    <linearGradient id="bg" x1="36" y1="26" x2="224" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="0.58" stop-color="#102a43"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <linearGradient id="bubble" x1="56" y1="54" x2="202" y2="184" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6cb6ff"/>
+      <stop offset="1" stop-color="#22c55e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <path d="M73 66h110c22.1 0 40 17.9 40 40v36c0 22.1-17.9 40-40 40h-41l-41 34c-5.9 4.9-14.9.7-14.9-7v-27H73c-22.1 0-40-17.9-40-40v-36c0-22.1 17.9-40 40-40z" fill="url(#bubble)" filter="url(#shadow)"/>
+  <path d="M77 111c0-17.1 13.9-31 31-31h48c17.1 0 31 13.9 31 31v25c0 17.1-13.9 31-31 31h-48c-17.1 0-31-13.9-31-31v-25z" fill="#07111f" opacity="0.88"/>
+  <circle cx="113" cy="123" r="9" fill="#e6edf3"/>
+  <circle cx="151" cy="123" r="9" fill="#e6edf3"/>
+  <path d="M111 146c12.3 9 29.2 9 42 0" fill="none" stroke="#e6edf3" stroke-width="9" stroke-linecap="round"/>
+  <path d="M47 56l8-18 8 18 18 8-18 8-8 18-8-18-18-8 18-8z" fill="#ffffff" opacity="0.9"/>
+  <path d="M203 40l5-12 5 12 12 5-12 5-5 12-5-12-12-5 12-5z" fill="#a7f3d0" opacity="0.95"/>
+</svg>
