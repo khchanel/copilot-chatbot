@@ -423,9 +423,23 @@
                                        Foreground="{DynamicResource TextBrush}" />
                     </Button>
                     <Border Width="1" Margin="4,6,8,6" Background="{DynamicResource BorderBrushModern}" />
+                    <CheckBox x:Name="ShowDetailsCheckBox"
+                              Content="Show details"
+                              VerticalAlignment="Center"
+                              Margin="0,0,10,0"
+                              Foreground="{DynamicResource MutedTextBrush}"
+                              FontSize="12"
+                              ToolTip="Show reasoning, tool calls, and intent messages"
+                              Click="ShowDetailsCheckBox_Click" />
+                    <Border Width="1" Margin="0,6,8,6" Background="{DynamicResource BorderBrushModern}" />
                     <Button x:Name="ThemeButton" Style="{StaticResource IconButton}"
                             ToolTip="Toggle light / dark theme" Click="ThemeButton_Click">
                         <ui:SymbolIcon x:Name="ThemeIcon" Symbol="WeatherMoon20" FontSize="18"
+                                       Foreground="{DynamicResource TextBrush}" />
+                    </Button>
+                    <Button x:Name="SessionInfoButton" Style="{StaticResource IconButton}"
+                            ToolTip="Session capabilities (MCP servers, agents, skills)" Click="SessionInfoButton_Click">
+                        <ui:SymbolIcon Symbol="PlugConnected20" FontSize="18"
                                        Foreground="{DynamicResource TextBrush}" />
                     </Button>
                     <Button x:Name="SettingsButton" Style="{StaticResource IconButton}"
@@ -455,10 +469,25 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <TabControl x:Name="ChatTabs" Margin="6,8,6,8" TabStripPlacement="Left"
                         SelectionChanged="ChatTabs_SelectionChanged" />
-            <Border Grid.Row="1" Margin="6,0,6,8" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrushModern}" BorderThickness="1" CornerRadius="12" Padding="10">
+            <!-- Copilot activity status bar (between chat history and input) -->
+            <Border x:Name="CopilotStatusBar" Grid.Row="1"
+                    Margin="8,0,8,3" Padding="10,5"
+                    Background="Transparent"
+                    Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusDot" Width="6" Height="6"
+                             Fill="{DynamicResource AccentBrush}"
+                             VerticalAlignment="Center" Margin="0,0,7,0" />
+                    <TextBlock x:Name="CopilotStatusText"
+                               Foreground="{DynamicResource MutedTextBrush}"
+                               FontSize="11" FontStyle="Italic" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Row="2" Margin="6,0,6,8" Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderBrushModern}" BorderThickness="1" CornerRadius="12" Padding="10">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="18" ShadowDepth="1" Opacity="0.10" />
                 </Border.Effect>

@@ -504,6 +504,91 @@
                     </DockPanel>
                 </TabItem>
 
+                <!-- Agents & Skills tab -->
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="PersonSettings20" FontSize="14" Margin="0,0,6,0" />
+                            <TextBlock Text="Agents &amp; Skills" />
+                        </StackPanel>
+                    </TabItem.Header>
+                    <DockPanel Margin="0,14,0,0">
+                        <!-- Note banner -->
+                        <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,14">
+                            <TextBlock Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap">
+                                <Run FontWeight="SemiBold" Foreground="{StaticResource TextBrush}">Default locations loaded automatically: </Run>
+                                <Run>~/.copilot/agents, &lt;working-dir&gt;/.github/agents, ~/.copilot/skills, &lt;working-dir&gt;/.github/skills</Run>
+                                <LineBreak />
+                                <Run>Add extra folders below. Changes take effect for new sessions.</Run>
+                            </TextBlock>
+                        </Border>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="14" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Agents column -->
+                            <DockPanel Grid.Column="0">
+                                <TextBlock DockPanel.Dock="Top" Text="Extra Agent Folders" FontWeight="SemiBold"
+                                           FontSize="13" Foreground="{StaticResource TextBrush}" Margin="0,0,0,8" />
+                                <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="AgentDirBox" Margin="0,0,6,0" />
+                                        <Button Content="Browse…" Grid.Column="1" Style="{StaticResource SmallButton}"
+                                                Margin="0,0,6,0" Click="BrowseAgentDir_Click" />
+                                        <Button Content="Add" Grid.Column="2" Style="{StaticResource SmallButton}"
+                                                Width="48" Click="AddAgentDir_Click" />
+                                    </Grid>
+                                </Border>
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top" Content="Remove selected"
+                                            HorizontalAlignment="Right" Style="{StaticResource SmallButton}"
+                                            Margin="0,0,0,6" Click="RemoveAgentDir_Click" />
+                                    <Border Style="{StaticResource CardBorder}" Padding="0">
+                                        <ListBox x:Name="AgentDirsList" BorderThickness="0" />
+                                    </Border>
+                                </DockPanel>
+                            </DockPanel>
+
+                            <!-- Skills column -->
+                            <DockPanel Grid.Column="2">
+                                <TextBlock DockPanel.Dock="Top" Text="Extra Skill Folders" FontWeight="SemiBold"
+                                           FontSize="13" Foreground="{StaticResource TextBrush}" Margin="0,0,0,8" />
+                                <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,8">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="SkillDirBox" Margin="0,0,6,0" />
+                                        <Button Content="Browse…" Grid.Column="1" Style="{StaticResource SmallButton}"
+                                                Margin="0,0,6,0" Click="BrowseSkillDir_Click" />
+                                        <Button Content="Add" Grid.Column="2" Style="{StaticResource SmallButton}"
+                                                Width="48" Click="AddSkillDir_Click" />
+                                    </Grid>
+                                </Border>
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Top" Content="Remove selected"
+                                            HorizontalAlignment="Right" Style="{StaticResource SmallButton}"
+                                            Margin="0,0,0,6" Click="RemoveSkillDir_Click" />
+                                    <Border Style="{StaticResource CardBorder}" Padding="0">
+                                        <ListBox x:Name="SkillDirsList" BorderThickness="0" />
+                                    </Border>
+                                </DockPanel>
+                            </DockPanel>
+                        </Grid>
+                    </DockPanel>
+                </TabItem>
+
                 <!-- Debug tab -->
                 <TabItem>
                     <TabItem.Header>

@@ -1,0 +1,183 @@
+<Window x:Class="CopilotChatbot.SessionInfoWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:local="clr-namespace:CopilotChatbot"
+        Title="Session Capabilities" Height="600" Width="560"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
+        Background="{DynamicResource PageBrush}">
+    <Window.Resources>
+        <SolidColorBrush x:Key="SurfaceBrush"      Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="PanelBrush"        Color="#FAFBFC"/>
+        <SolidColorBrush x:Key="BorderBrushModern" Color="#D0D7DE"/>
+        <SolidColorBrush x:Key="TextBrush"         Color="#1F2328"/>
+        <SolidColorBrush x:Key="MutedTextBrush"    Color="#5D6673"/>
+        <SolidColorBrush x:Key="AccentBrush"       Color="#0A65CC"/>
+        <SolidColorBrush x:Key="PageBrush"         Color="#F3F5F8"/>
+
+        <!-- Status dot colour — computed in code-behind via Tag -->
+        <local:StatusColorConverter x:Key="StatusColor"/>
+        <local:NullToVisibilityConverter x:Key="NullToVisibility"/>
+
+        <!-- Row item (MCP server or agent) -->
+        <DataTemplate x:Key="McpServerTemplate">
+            <Border Margin="0,0,0,6" Padding="10,8" CornerRadius="7"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="1">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,7,0"
+                                 Fill="{Binding Status, Converter={StaticResource StatusColor}}"/>
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"
+                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding Status}" FontSize="11" Margin="8,0,0,0"
+                                   Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ItemsControl ItemsSource="{Binding Tools}" Margin="15,4,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="#EEF2F8" CornerRadius="4" Padding="5,2" Margin="0,1,4,1">
+                                    <TextBlock Text="{Binding}" FontSize="10"
+                                               Foreground="{StaticResource MutedTextBrush}"/>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="AgentTemplate">
+            <Border Margin="0,0,0,6" Padding="10,8" CornerRadius="7"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="1">
+                <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,7,0"
+                             Fill="{Binding Status, Converter={StaticResource StatusColor}}"/>
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="13"
+                               Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Status}" FontSize="11" Margin="8,0,0,0"
+                               Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Source}" FontSize="11" Margin="8,0,0,0"
+                               Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center"
+                               Opacity="0.7"/>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <DataTemplate x:Key="SkillTemplate">
+            <Border Margin="0,0,0,4" Padding="10,6" CornerRadius="7"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12"
+                               Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock Text="{Binding Description}" FontSize="11" Margin="0,2,0,0"
+                               Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap"
+                               Visibility="{Binding Description, Converter={StaticResource NullToVisibility}}"/>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- Title bar -->
+        <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="0,0,0,1" Padding="18,12">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <ui:SymbolIcon Symbol="PlugConnected24" FontSize="22"
+                               Foreground="{StaticResource AccentBrush}" Margin="0,0,10,0"/>
+                <StackPanel>
+                    <TextBlock Text="Session Capabilities" FontSize="15" FontWeight="SemiBold"
+                               Foreground="{StaticResource TextBrush}"/>
+                    <TextBlock x:Name="SubtitleText" FontSize="11"
+                               Foreground="{StaticResource MutedTextBrush}"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Footer -->
+        <Border DockPanel.Dock="Bottom" Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="0,1,0,0" Padding="16,10">
+            <Button Content="Close" HorizontalAlignment="Right" Padding="18,7"
+                    Click="CloseButton_Click"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="1"
+                    Foreground="{StaticResource TextBrush}" FontWeight="SemiBold" Cursor="Hand">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#F0F4F8"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#9BA4AE"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </Border>
+
+        <!-- Scrollable content -->
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16,12,16,4">
+            <StackPanel>
+                <!-- MCP Servers -->
+                <StackPanel Margin="0,0,0,16">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <ui:SymbolIcon Symbol="CloudSync20" FontSize="15"
+                                       Foreground="{StaticResource AccentBrush}" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="McpHeader" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ItemsControl x:Name="McpList" ItemTemplate="{StaticResource McpServerTemplate}"/>
+                    <TextBlock x:Name="McpEmptyText" Text="No MCP servers registered"
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                               FontStyle="Italic" Visibility="Collapsed" Margin="4,2"/>
+                </StackPanel>
+
+                <Separator Margin="0,0,0,16" Background="{StaticResource BorderBrushModern}"/>
+
+                <!-- Agents / Extensions -->
+                <StackPanel Margin="0,0,0,16">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <ui:SymbolIcon Symbol="Bot20" FontSize="15"
+                                       Foreground="{StaticResource AccentBrush}" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="AgentsHeader" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ItemsControl x:Name="AgentsList" ItemTemplate="{StaticResource AgentTemplate}"/>
+                    <TextBlock x:Name="AgentsEmptyText" Text="No agents loaded"
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                               FontStyle="Italic" Visibility="Collapsed" Margin="4,2"/>
+                </StackPanel>
+
+                <Separator Margin="0,0,0,16" Background="{StaticResource BorderBrushModern}"/>
+
+                <!-- Skills -->
+                <StackPanel Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                        <ui:SymbolIcon Symbol="Lightbulb20" FontSize="15"
+                                       Foreground="{StaticResource AccentBrush}" Margin="0,0,6,0"/>
+                        <TextBlock x:Name="SkillsHeader" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <ItemsControl x:Name="SkillsList" ItemTemplate="{StaticResource SkillTemplate}"/>
+                    <TextBlock x:Name="SkillsEmptyText" Text="No skills loaded"
+                               Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                               FontStyle="Italic" Visibility="Collapsed" Margin="4,2"/>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

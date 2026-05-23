@@ -19,8 +19,12 @@ public sealed class CopilotChatService : IAsyncDisposable
     private CopilotClient? _client;
     private readonly ConcurrentDictionary<ChatSessionView, CopilotSession> _sessions = [];
     private readonly ConcurrentDictionary<string, byte> _sessionPermissionApprovals = [];
+    private readonly Dictionary<string, McpServerConfig> _mcpServerConfigs = new();
+    private volatile SessionCapabilitiesSnapshot _capabilitiesSnapshot = new([], [], []);
+    public SessionCapabilitiesSnapshot CapabilitiesSnapshot => _capabilitiesSnapshot;
     public event Action<CopilotUsageStatus>? UsageUpdated;
     public event Action<ChatSessionView, bool>? SessionPendingChanged;
+    public event Action<ChatSessionView, string?>? StatusChanged;
 
     public CopilotChatService(
         SettingsStore settingsStore,
@@ -96,6 +100,41 @@ public sealed class CopilotChatService : IAsyncDisposable
         SetPending(chat, false);
     }
 
+    public async Task<SessionCapabilitiesSnapshot> GetCapabilitiesSnapshotAsync(ChatSessionView? chat, CancellationToken cancellationToken = default)
+    {
+        if (chat is null || !_sessions.TryGetValue(chat, out var session))
+        {
+            return _capabilitiesSnapshot;
+        }
+
+        try
+        {
+            var result = await session.Rpc.Agent.ListAsync(cancellationToken);
+            var customAgents = result.Agents
+                .Select(agent => new AgentInfo(
+                    string.IsNullOrWhiteSpace(agent.DisplayName) ? agent.Name : agent.DisplayName,
+                    "loaded",
+                    GetString(agent, "Source") ?? "custom"))
+                .Where(agent => !string.IsNullOrWhiteSpace(agent.Name) && agent.Name != "?")
+                .ToList();
+
+            if (customAgents.Count > 0)
+            {
+                var current = _capabilitiesSnapshot;
+                _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(
+                    current.McpServers,
+                    MergeAgents(current.Agents, customAgents),
+                    current.Skills);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Log("AGENTS-LIST-ERROR", ex.Message);
+        }
+
+        return _capabilitiesSnapshot;
+    }
+
     public async Task CloseSessionAsync(ChatSessionView chat)
     {
         if (_sessions.TryRemove(chat, out var session))
@@ -151,7 +190,7 @@ public sealed class CopilotChatService : IAsyncDisposable
         {
             await client.StartAsync(cancellationToken);
             _client = client;
-            await LoadUserMcpConfigAsync(client, cancellationToken);
+            await LoadUserMcpConfigAsync(client, cwd, cancellationToken);
             return _client;
         }
         catch
@@ -161,23 +200,64 @@ public sealed class CopilotChatService : IAsyncDisposable
         }
     }
 
-    // Reads ~/.copilot/mcp-config.json and registers each server with the SDK.
-    // Format: { "mcpServers": { "name": { "command": "...", "args": [...], "env": {...} } } }
-    // HTTP servers: { "name": { "url": "https://...", "headers": {...} } }
-    private async Task LoadUserMcpConfigAsync(CopilotClient client, CancellationToken cancellationToken)
+    // Reads MCP server configs from known locations and registers each server with the SDK.
+    // Supported root keys: "mcpServers" (Copilot CLI format) and "servers" (VS Code mcp.json format).
+    // Searched paths (later entries override earlier ones): user-level fallbacks, then project-level.
+    private async Task LoadUserMcpConfigAsync(CopilotClient client, string cwd, CancellationToken cancellationToken)
     {
-        var configPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".copilot", "mcp-config.json");
+        var candidatePaths = new[]
+        {
+            // User-level
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".copilot", "mcp-config.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "GitHub Copilot", "mcp-config.json"),
+            // Project-level (VS Code Copilot / GitHub Copilot CLI standard — takes precedence)
+            Path.Combine(cwd, ".github", "copilot", "mcp.json"),
+            Path.Combine(cwd, ".copilot", "mcp-config.json"),
+        };
 
-        if (!File.Exists(configPath))
+        // Built-in servers first (lowest precedence — user configs may override by name).
+        await LoadBuiltinMcpServersAsync(client, cancellationToken);
+
+        foreach (var path in candidatePaths.Where(File.Exists).Distinct())
+            await LoadMcpConfigFileAsync(client, path, cancellationToken);
+    }
+
+    private async Task LoadBuiltinMcpServersAsync(CopilotClient client, CancellationToken cancellationToken)
+    {
+        const string resourceName = "CopilotChatbot.Assets.builtin-mcp-servers.json";
+        var asm = System.Reflection.Assembly.GetExecutingAssembly();
+        await using var stream = asm.GetManifestResourceStream(resourceName);
+        if (stream is null)
+        {
+            _logger.Log("MCP-CONFIG-ERROR", $"Embedded resource '{resourceName}' not found.");
             return;
+        }
+        using var reader = new System.IO.StreamReader(stream);
+        var json = await reader.ReadToEndAsync(cancellationToken);
+        await LoadMcpConfigJsonAsync(client, json, "(built-in)", cancellationToken);
+    }
 
+    private async Task LoadMcpConfigFileAsync(CopilotClient client, string configPath, CancellationToken cancellationToken)
+    {
         try
         {
             var json = await File.ReadAllTextAsync(configPath, cancellationToken);
+            await LoadMcpConfigJsonAsync(client, json, configPath, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.Log("MCP-CONFIG-ERROR", $"Failed to load {configPath}: {ex.Message}");
+        }
+    }
+
+    private async Task LoadMcpConfigJsonAsync(CopilotClient client, string json, string source, CancellationToken cancellationToken)
+    {
+        try
+        {
             var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("mcpServers", out var servers))
+            // Support both "mcpServers" (GitHub Copilot CLI) and "servers" (VS Code .vscode/mcp.json)
+            if (!doc.RootElement.TryGetProperty("mcpServers", out var servers) &&
+                !doc.RootElement.TryGetProperty("servers", out servers))
                 return;
 
             foreach (var server in servers.EnumerateObject())
@@ -186,14 +266,25 @@ public sealed class CopilotChatService : IAsyncDisposable
                 var cfg = server.Value;
                 try
                 {
-                    object config;
+                    McpServerConfig serverConfig;
                     if (cfg.TryGetProperty("url", out var urlProp))
                     {
                         var httpCfg = new McpHttpServerConfig { Url = urlProp.GetString() ?? "" };
                         if (cfg.TryGetProperty("headers", out var headersProp))
                             httpCfg.Headers = headersProp.EnumerateObject()
                                 .ToDictionary(h => h.Name, h => h.Value.GetString() ?? "");
-                        config = httpCfg;
+                        if (cfg.TryGetProperty("tools", out var toolsProp))
+                        {
+                            foreach (var t in toolsProp.EnumerateArray())
+                            {
+                                var toolName = t.GetString();
+                                if (!string.IsNullOrWhiteSpace(toolName))
+                                    httpCfg.Tools.Add(toolName);
+                            }
+                        }
+                        if (!httpCfg.Tools.Any())
+                            httpCfg.Tools.Add("*");
+                        serverConfig = httpCfg;
                     }
                     else
                     {
@@ -208,21 +299,35 @@ public sealed class CopilotChatService : IAsyncDisposable
                                 .ToDictionary(e => e.Name, e => e.Value.GetString() ?? "");
                         if (cfg.TryGetProperty("cwd", out var cwdProp))
                             stdio.Cwd = cwdProp.GetString();
-                        config = stdio;
+                        if (cfg.TryGetProperty("tools", out var stdioProp))
+                        {
+                            foreach (var t in stdioProp.EnumerateArray())
+                            {
+                                var toolName = t.GetString();
+                                if (!string.IsNullOrWhiteSpace(toolName))
+                                    stdio.Tools.Add(toolName);
+                            }
+                        }
+                        if (!stdio.Tools.Any())
+                            stdio.Tools.Add("*");
+                        serverConfig = stdio;
                     }
 
-                    await UpsertMcpServerAsync(client, name, config, cancellationToken);
-                    _logger.Log("MCP-CONFIG", $"Registered MCP server '{name}' from {configPath}");
+                    await UpsertMcpServerAsync(client, name, serverConfig, cancellationToken);
+                    _mcpServerConfigs[name] = serverConfig;
+                    _logger.Log("MCP-CONFIG", $"Registered MCP server '{name}' from {source}");
+                    UpsertMcpServerSnapshot(name, "registered");
                 }
                 catch (Exception ex)
                 {
                     _logger.Log("MCP-CONFIG-ERROR", $"Failed to register MCP server '{name}': {ex.Message}");
+                    UpsertMcpServerSnapshot(name, "error");
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.Log("MCP-CONFIG-ERROR", $"Failed to load {configPath}: {ex.Message}");
+            _logger.Log("MCP-CONFIG-ERROR", $"Failed to parse MCP config from {source}: {ex.Message}");
         }
     }
 
@@ -247,6 +352,14 @@ public sealed class CopilotChatService : IAsyncDisposable
 
         var client = await EnsureClientAsync(settings);
         var token = await ResolveGitHubTokenAsync(settings.GitHubToken);
+        var customAgents = LoadAgentsFromDirectories(settings);
+        if (customAgents?.Count > 0)
+        {
+            var agentInfos = customAgents
+                .Select(a => new AgentInfo(a.DisplayName ?? a.Name, "loaded", "file"))
+                .ToList();
+            _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(_capabilitiesSnapshot.McpServers, agentInfos, _capabilitiesSnapshot.Skills);
+        }
         var session = await client.CreateSessionAsync(new SessionConfig
         {
             Model = model?.Id ?? settings.SelectedModelId,
@@ -254,7 +367,9 @@ public sealed class CopilotChatService : IAsyncDisposable
             Streaming = true,
             GitHubToken = token,
             SystemMessage = string.IsNullOrWhiteSpace(chat.SystemPrompt) ? null : new SystemMessageConfig { Content = chat.SystemPrompt },
-            AvailableTools = settings.Permissions.AllowedTools.Count == 0 ? null : settings.Permissions.AllowedTools.ToArray(),
+            McpServers = _mcpServerConfigs.Count > 0 ? _mcpServerConfigs : null,
+            SkillDirectories = GetEffectiveSkillDirectories(settings),
+            CustomAgents = customAgents,
             OnPermissionRequest = async (request, _) => await EvaluatePermissionAsync(request, settings),
             OnUserInputRequest = async (request, _) =>
             {
@@ -557,6 +672,7 @@ public sealed class CopilotChatService : IAsyncDisposable
                 break;
             case AssistantReasoningDeltaEvent delta:
                 // Deltas are too noisy to log — only log the complete reasoning block below.
+                StatusChanged?.Invoke(chat, "Reasoning\u2026");
                 AddOrUpdate(chat, ChatMessageKind.Reasoning, delta.Data.DeltaContent, $"reason-{delta.Data.ReasoningId}", append: true);
                 break;
             case AssistantReasoningEvent reasoning:
@@ -564,6 +680,7 @@ public sealed class CopilotChatService : IAsyncDisposable
                 AddOrUpdate(chat, ChatMessageKind.Reasoning, reasoning.Data.Content, $"reason-{reasoning.Data.ReasoningId}");
                 break;
             case AssistantMessageDeltaEvent delta:
+                StatusChanged?.Invoke(chat, "Writing response\u2026");
                 AddOrUpdate(chat, ChatMessageKind.Assistant, delta.Data.DeltaContent, $"msg-{delta.Data.MessageId}", append: true);
                 break;
             case AssistantMessageEvent message:
@@ -586,6 +703,7 @@ public sealed class CopilotChatService : IAsyncDisposable
                     ? $"Running: {tool.Data.ToolName}"
                     : $"Running: {tool.Data.ToolName}\n\n{extra}";
                 _logger.LogBlock("TOOL-START", description);
+                StatusChanged?.Invoke(chat, $"Running tool: {tool.Data.ToolName}");
                 AddOrUpdate(chat, ChatMessageKind.Tool, description, $"tool-{tool.Data.ToolCallId}");
                 break;
             }
@@ -594,6 +712,7 @@ public sealed class CopilotChatService : IAsyncDisposable
                 if (tool.Data.Success)
                 {
                     _logger.Log("TOOL-DONE", $"✓ {tool.Data.ToolCallId}: completed");
+                    StatusChanged?.Invoke(chat, "Thinking\u2026");
                     AddOrUpdate(chat, ChatMessageKind.Tool,
                         $"\u2713 {tool.Data.ToolCallId}: completed",
                         $"tool-{tool.Data.ToolCallId}");
@@ -625,6 +744,92 @@ public sealed class CopilotChatService : IAsyncDisposable
                 SetPending(chat, false);
                 break;
             }
+            case SessionMcpServersLoadedEvent mcpLoaded:
+            {
+                // Use reflection since the exact collection property name may differ by SDK version
+                var dataProp = mcpLoaded.Data.GetType().GetProperty("Servers", BindingFlags.Instance | BindingFlags.Public)
+                    ?? mcpLoaded.Data.GetType().GetProperty("McpServers", BindingFlags.Instance | BindingFlags.Public);
+                var serverList = dataProp?.GetValue(mcpLoaded.Data) as IEnumerable;
+                var mcpList = serverList?.Cast<object>().Select(s =>
+                {
+                    var name = GetString(s, "Name") ?? "?";
+                    var status = GetString(s, "Status") ?? "?";
+                    var toolsProp = s.GetType().GetProperty("Tools", BindingFlags.Instance | BindingFlags.Public);
+                    var toolNames = new List<string>();
+                    if (toolsProp?.GetValue(s) is IEnumerable toolList)
+                        toolNames.AddRange(toolList.Cast<object>()
+                            .Select(t => GetString(t, "Name") ?? GetString(t, "ToolName") ?? "?"));
+                    return new McpServerInfo(name, status, toolNames);
+                }).ToList() ?? [];
+                _logger.LogBlock("MCP-LOADED", string.Join("\n", mcpList.Select(s =>
+                    s.Tools.Count == 0 ? $"  {s.Name} [{s.Status}]" : $"  {s.Name} [{s.Status}] tools: {string.Join(", ", s.Tools)}")));
+                if (mcpList.Count > 0)
+                {
+                    _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(mcpList, _capabilitiesSnapshot.Agents, _capabilitiesSnapshot.Skills);
+                }
+                break;
+            }
+            case SessionCustomAgentsUpdatedEvent customAgentsUpdated:
+            {
+                var customAgents = customAgentsUpdated.Data.Agents.Select(a =>
+                {
+                    var name = a.DisplayName ?? a.Name ?? "?";
+                    var status = "loaded";
+                    var source = a.Source ?? "file";
+                    return new AgentInfo(name, status, source);
+                }).ToList();
+                _logger.Log("CUSTOM-AGENTS-UPDATED", string.Join(", ", customAgents.Select(a => $"{a.Name} [{a.Status}]")));
+                if (customAgents.Count > 0)
+                {
+                    _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(
+                        _capabilitiesSnapshot.McpServers,
+                        MergeAgents(_capabilitiesSnapshot.Agents, customAgents),
+                        _capabilitiesSnapshot.Skills);
+                }
+                break;
+            }
+            case SessionExtensionsLoadedEvent extLoaded:
+            {
+                var dataProp = extLoaded.Data.GetType().GetProperty("Extensions", BindingFlags.Instance | BindingFlags.Public)
+                    ?? extLoaded.Data.GetType().GetProperty("Agents", BindingFlags.Instance | BindingFlags.Public);
+                var extList2 = dataProp?.GetValue(extLoaded.Data) as IEnumerable;
+                var agents = extList2?.Cast<object>().Select(e =>
+                {
+                    var name = GetString(e, "DisplayName") ?? GetString(e, "Name") ?? "?";
+                    var status = GetString(e, "Status") ?? "?";
+                    var source = GetString(e, "Source") ?? "";
+                    return new AgentInfo(name, status, source);
+                }).ToList() ?? [];
+                _logger.Log("AGENTS-LOADED", string.Join(", ", agents.Select(a => $"{a.Name} [{a.Status}]")));
+                _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(
+                    _capabilitiesSnapshot.McpServers,
+                    MergeAgents(_capabilitiesSnapshot.Agents, agents),
+                    _capabilitiesSnapshot.Skills);
+                break;
+            }
+            case SessionSkillsLoadedEvent skillsLoaded:
+            {
+                var dataProp = skillsLoaded.Data.GetType().GetProperty("Skills", BindingFlags.Instance | BindingFlags.Public);
+                var skillList2 = dataProp?.GetValue(skillsLoaded.Data) as IEnumerable;
+                var skills = skillList2?.Cast<object>().Select(s =>
+                {
+                    var name = GetString(s, "Name") ?? GetString(s, "Id") ?? "?";
+                    var description = GetString(s, "Description") ?? GetString(s, "DisplayName");
+                    return new SkillInfo(name, description);
+                }).ToList() ?? [];
+                _logger.Log("SKILLS-LOADED", string.Join(", ", skills.Select(s => s.Name)));
+                _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(_capabilitiesSnapshot.McpServers, _capabilitiesSnapshot.Agents, skills);
+                break;
+            }
+            case SessionMcpServerStatusChangedEvent mcpStatus:
+            {
+                var name = GetString(mcpStatus.Data, "ServerName") ?? GetString(mcpStatus.Data, "Name") ?? "?";
+                var status = GetString(mcpStatus.Data, "Status") ?? "?";
+                var msg = GetString(mcpStatus.Data, "StatusMessage") ?? GetString(mcpStatus.Data, "Error") ?? "";
+                _logger.Log("MCP-STATUS", string.IsNullOrEmpty(msg) ? $"{name}: {status}" : $"{name}: {status} — {msg}");
+                UpsertMcpServerSnapshot(name, status);
+                break;
+            }
             case SessionIdleEvent:
                 _logger.Log("IDLE", "Session became idle");
                 SetPending(chat, false);
@@ -642,6 +847,8 @@ public sealed class CopilotChatService : IAsyncDisposable
         {
             chat.IsPending = isPending;
             SessionPendingChanged?.Invoke(chat, isPending);
+            if (!isPending)
+                StatusChanged?.Invoke(chat, null);
         });
     }
 
@@ -682,6 +889,45 @@ public sealed class CopilotChatService : IAsyncDisposable
                 chat.Messages.Insert(index, existing);
             }
         });
+    }
+
+    private void UpsertMcpServerSnapshot(string name, string status, IReadOnlyList<string>? tools = null)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name == "?")
+        {
+            return;
+        }
+
+        var current = _capabilitiesSnapshot;
+        var servers = current.McpServers.ToList();
+        var index = servers.FindIndex(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            var existing = servers[index];
+            servers[index] = new McpServerInfo(name, status, tools ?? existing.Tools);
+        }
+        else
+        {
+            servers.Add(new McpServerInfo(name, status, tools ?? []));
+        }
+
+        _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(servers, current.Agents, current.Skills);
+    }
+
+    private static IReadOnlyList<AgentInfo> MergeAgents(IEnumerable<AgentInfo> existing, IEnumerable<AgentInfo> incoming)
+    {
+        var merged = existing
+            .Where(agent => !string.IsNullOrWhiteSpace(agent.Name) && agent.Name != "?")
+            .ToDictionary(agent => agent.Name, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var agent in incoming.Where(agent => !string.IsNullOrWhiteSpace(agent.Name) && agent.Name != "?"))
+        {
+            merged[agent.Name] = agent;
+        }
+
+        return merged.Values
+            .OrderBy(agent => agent.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static string? TryGetHost(string? value)
@@ -800,6 +1046,128 @@ public sealed class CopilotChatService : IAsyncDisposable
             await DisposeClientQuietlyAsync(_client);
             _client = null;
         }
+    }
+
+    private IList<string>? GetEffectiveSkillDirectories(AppSettings settings)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var dirs = new List<string>();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // Include .github/skills from the process working directory if it exists
+        var processCwd = Directory.GetCurrentDirectory();
+        if (Directory.Exists(Path.Combine(processCwd, ".github", "skills")))
+            AddUniquePath(dirs, seen, Path.Combine(processCwd, ".github", "skills"));
+        // Include .github/skills from settings.WorkingDirectory if set and exists
+        if (!string.IsNullOrWhiteSpace(settings.WorkingDirectory) &&
+            Directory.Exists(Path.Combine(settings.WorkingDirectory, ".github", "skills")))
+            AddUniquePath(dirs, seen, Path.Combine(settings.WorkingDirectory, ".github", "skills"));
+        // Add ~/.copilot/skills only if it exists
+        if (Directory.Exists(Path.Combine(home, ".copilot", "skills")))
+            AddUniquePath(dirs, seen, Path.Combine(home, ".copilot", "skills"));
+        foreach (var d in settings.SkillDirectories)
+            if (Directory.Exists(d)) AddUniquePath(dirs, seen, d);
+        if (dirs.Count > 0)
+            _logger.Log("SKILL-DIRS", string.Join(", ", dirs));
+        return dirs.Count > 0 ? dirs : null;
+    }
+
+    private IList<CustomAgentConfig>? LoadAgentsFromDirectories(AppSettings settings)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var dirs = new List<string>();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // Include .github/agents from the process working directory if it exists
+        var processCwd = Directory.GetCurrentDirectory();
+        if (Directory.Exists(Path.Combine(processCwd, ".github", "agents")))
+            AddUniquePath(dirs, seen, Path.Combine(processCwd, ".github", "agents"));
+        // Include .github/agents from settings.WorkingDirectory if set and exists
+        if (!string.IsNullOrWhiteSpace(settings.WorkingDirectory) &&
+            Directory.Exists(Path.Combine(settings.WorkingDirectory, ".github", "agents")))
+            AddUniquePath(dirs, seen, Path.Combine(settings.WorkingDirectory, ".github", "agents"));
+        // Add ~/.copilot/agents only if it exists
+        if (Directory.Exists(Path.Combine(home, ".copilot", "agents")))
+            AddUniquePath(dirs, seen, Path.Combine(home, ".copilot", "agents"));
+        foreach (var d in settings.AgentDirectories)
+            if (Directory.Exists(d)) AddUniquePath(dirs, seen, d);
+        var agents = new List<CustomAgentConfig>();
+        foreach (var dir in dirs)
+        {
+            foreach (var file in Directory.EnumerateFiles(dir, "*.md"))
+            {
+                var agent = ParseAgentFile(file);
+                if (agent != null) agents.Add(agent);
+            }
+        }
+        if (agents.Count > 0)
+            _logger.Log("AGENTS-FROM-DIRS", string.Join(", ", agents.Select(a => a.Name)));
+        return agents.Count > 0 ? agents : null;
+    }
+
+    private CustomAgentConfig? ParseAgentFile(string path)
+    {
+        try
+        {
+            var content = File.ReadAllText(path);
+            var name = Path.GetFileNameWithoutExtension(path);
+            string? description = null;
+            string? displayName = null;
+            List<string>? tools = null;
+            var prompt = content;
+
+            if (content.StartsWith("---", StringComparison.Ordinal))
+            {
+                var end = content.IndexOf("\n---", 3, StringComparison.Ordinal);
+                if (end > 0)
+                {
+                    var frontmatter = content[3..end].Trim();
+                    prompt = content[(end + 4)..].TrimStart();
+                    foreach (var line in frontmatter.Split('\n'))
+                    {
+                        var colon = line.IndexOf(':');
+                        if (colon < 0) continue;
+                        var key = line[..colon].Trim().ToLowerInvariant();
+                        var val = line[(colon + 1)..].Trim().Trim('"', '\'');
+                        switch (key)
+                        {
+                            case "name": name = val; break;
+                            case "description": description = val; break;
+                            case "displayname": displayName = val; break;
+                            case "tools": tools = ParseYamlStringList(val); break;
+                        }
+                    }
+                }
+            }
+            return new CustomAgentConfig
+            {
+                Name = name,
+                DisplayName = displayName ?? name,
+                Description = description,
+                Tools = tools!,
+                Prompt = string.IsNullOrWhiteSpace(prompt) ? "" : prompt,
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.Log("AGENT-LOAD-ERROR", $"{path}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static List<string>? ParseYamlStringList(string value)
+    {
+        value = value.Trim();
+        if (!value.StartsWith('[') || !value.EndsWith(']')) return null;
+        return [.. value[1..^1].Split(',').Select(s => s.Trim().Trim('"', '\'', ' ')).Where(s => !string.IsNullOrEmpty(s))];
+    }
+
+    private static void AddUniquePath(List<string> list, HashSet<string> seen, string path)
+    {
+        if (seen.Add(path)) list.Add(path);
+    }
+
+    private static void AddDirIfExists(List<string> list, string path)
+    {
+        if (Directory.Exists(path)) list.Add(path);
     }
 
     private static async Task DisposeClientQuietlyAsync(CopilotClient client)

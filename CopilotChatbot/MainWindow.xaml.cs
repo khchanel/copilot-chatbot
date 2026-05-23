@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly List<ModelChoice> _models = [];
     private AppSettings _settings;
     private bool _isDarkTheme;
+    private bool _showDetailMessages;
 
     public MainWindow()
     {
@@ -34,6 +35,7 @@ public partial class MainWindow : Window
         _copilot = new CopilotChatService(_settingsStore, PromptForPermissionAsync, PromptForUserInputAsync, _debugLogger);
         _copilot.UsageUpdated += Copilot_UsageUpdated;
         _copilot.SessionPendingChanged += Copilot_SessionPendingChanged;
+        _copilot.StatusChanged += Copilot_StatusChanged;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
     }
@@ -83,6 +85,13 @@ public partial class MainWindow : Window
         ApplyTheme(!_isDarkTheme);
     }
 
+    private async void SessionInfoButton_Click(object sender, RoutedEventArgs e)
+    {
+        var snapshot = await _copilot.GetCapabilitiesSnapshotAsync(CurrentChat);
+        var window = new SessionInfoWindow(snapshot, this);
+        window.Show();
+    }
+
     private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
         var window = new SettingsWindow(_settingsStore, _settings, _debugLogger) { Owner = this };
@@ -113,6 +122,7 @@ public partial class MainWindow : Window
         {
             RenderCurrentChat();
             UpdateInputState();
+            UpdateStatusBar(CurrentChat);
         }
     }
 
@@ -262,6 +272,58 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() => UsageStatusTextBlock.Text = "Usage: " + usage.ToStatusText());
     }
 
+    private void Copilot_StatusChanged(ChatSessionView chat, string? status)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            chat.LastStatus = status;
+            if (ReferenceEquals(chat, CurrentChat))
+                UpdateStatusBar(chat);
+        });
+    }
+
+    private void UpdateStatusBar(ChatSessionView? chat)
+    {
+        var status = chat?.LastStatus;
+        if (string.IsNullOrEmpty(status))
+        {
+            CopilotStatusBar.Visibility = Visibility.Collapsed;
+            StopStatusDotAnimation();
+        }
+        else
+        {
+            CopilotStatusText.Text = status;
+            CopilotStatusBar.Visibility = Visibility.Visible;
+            StartStatusDotAnimation();
+        }
+    }
+
+    private Storyboard? _statusDotStoryboard;
+
+    private void StartStatusDotAnimation()
+    {
+        if (_statusDotStoryboard != null) return;
+        _statusDotStoryboard = new Storyboard();
+        var anim = new DoubleAnimation
+        {
+            From = 1.0,
+            To = 0.25,
+            Duration = new Duration(TimeSpan.FromSeconds(0.65)),
+            AutoReverse = true,
+            RepeatBehavior = RepeatBehavior.Forever
+        };
+        Storyboard.SetTarget(anim, StatusDot);
+        Storyboard.SetTargetProperty(anim, new PropertyPath(UIElement.OpacityProperty));
+        _statusDotStoryboard.Children.Add(anim);
+        _statusDotStoryboard.Begin(this);
+    }
+
+    private void StopStatusDotAnimation()
+    {
+        _statusDotStoryboard?.Stop();
+        _statusDotStoryboard = null;
+    }
+
     private void Copilot_SessionPendingChanged(ChatSessionView chat, bool isPending)
     {
         Dispatcher.Invoke(() =>
@@ -319,6 +381,10 @@ public partial class MainWindow : Window
         ChatTabs.SelectedItem = tab;
         ChatTabs.UpdateLayout();
         UpdateInputState();
+
+        chat.Browser.DefaultBackgroundColor = _isDarkTheme
+            ? System.Drawing.Color.FromArgb(255, 17, 24, 39)
+            : System.Drawing.Color.White;
 
         try
         {
@@ -533,6 +599,16 @@ public partial class MainWindow : Window
         StopButton.Visibility = isPending ? Visibility.Visible : Visibility.Collapsed;
         PromptBeam.Visibility = isPending ? Visibility.Visible : Visibility.Collapsed;
         if (isPending) StartBeamAnimation(); else StopBeamAnimation();
+
+        // Disable the popup (open) buttons in the browser while streaming.
+        var browser = CurrentChat?.Browser;
+        if (browser?.CoreWebView2 != null)
+        {
+            var js = isPending
+                ? "document.querySelector('main')?.classList.add('streaming')"
+                : "document.querySelector('main')?.classList.remove('streaming')";
+            _ = browser.ExecuteScriptAsync(js);
+        }
     }
 
     private Storyboard? _beamStoryboard;
@@ -598,6 +674,16 @@ public partial class MainWindow : Window
 
     private void RenderChat(ChatSessionView chat) => _ = RenderChatAsync(chat);
 
+    private static readonly IReadOnlySet<ChatMessageKind> DetailMessageKinds = new HashSet<ChatMessageKind>
+    {
+        ChatMessageKind.Reasoning,
+        ChatMessageKind.Tool,
+        ChatMessageKind.Intent
+    };
+
+    private IEnumerable<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages) =>
+        _showDetailMessages ? messages : messages.Where(m => !DetailMessageKinds.Contains(m.Kind));
+
     private async Task RenderChatAsync(ChatSessionView chat)
     {
         if (chat.Browser.CoreWebView2 is null)
@@ -605,17 +691,19 @@ public partial class MainWindow : Window
             return;
         }
 
+        var messages = FilterMessages(chat.Messages);
+
         if (!chat.IsPageInitialized)
         {
             chat.IsPageInitialized = true;
-            chat.Browser.NavigateToString(_htmlRenderer.RenderDocument(chat.Messages, _isDarkTheme));
+            chat.Browser.NavigateToString(_htmlRenderer.RenderDocument(messages, _isDarkTheme));
             return;
         }
 
         // Incremental update: update only <main> content and preserve the scroll position
         try
         {
-            var bodyHtml = _htmlRenderer.RenderBody(chat.Messages, _isDarkTheme);
+            var bodyHtml = _htmlRenderer.RenderBody(messages, _isDarkTheme);
             var jsonHtml = System.Text.Json.JsonSerializer.Serialize(bodyHtml);
             await chat.Browser.ExecuteScriptAsync($$"""
                 (function() {
@@ -638,6 +726,12 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowDetailsCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        _showDetailMessages = ShowDetailsCheckBox.IsChecked == true;
+        RenderCurrentChat();
+    }
+
     private void ApplyTheme(bool dark)
     {
         _isDarkTheme = dark;
@@ -657,9 +751,17 @@ public partial class MainWindow : Window
         SetBrush("DisabledTextBrush", dark ? "#7F8A99" : "#8A94A3");
         ThemeIcon.Symbol = dark ? SymbolRegular.WeatherSunny20 : SymbolRegular.WeatherMoon20;
         // Force full re-render of all chats so the new theme CSS is applied
+        var bgColor = dark
+            ? System.Drawing.Color.FromArgb(255, 17, 24, 39)
+            : System.Drawing.Color.White;
         foreach (var tab in ChatTabs.Items.OfType<TabItem>())
+        {
             if (tab.Tag is ChatSessionView c)
+            {
                 c.IsPageInitialized = false;
+                c.Browser.DefaultBackgroundColor = bgColor;
+            }
+        }
         RenderCurrentChat();
     }
 

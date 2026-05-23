@@ -22,6 +22,14 @@ public sealed class ChatMessage
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
 }
 
+public sealed record McpServerInfo(string Name, string Status, IReadOnlyList<string> Tools);
+public sealed record AgentInfo(string Name, string Status, string Source);
+public sealed record SkillInfo(string Name, string? Description);
+public sealed record SessionCapabilitiesSnapshot(
+    IReadOnlyList<McpServerInfo> McpServers,
+    IReadOnlyList<AgentInfo> Agents,
+    IReadOnlyList<SkillInfo> Skills);
+
 public sealed class ChatSessionView
 {
     public string Title { get; set; }
@@ -29,6 +37,7 @@ public sealed class ChatSessionView
     public bool IsPageInitialized { get; set; }
     public bool IsPending { get; set; }
     public string? SystemPrompt { get; set; }
+    public string? LastStatus { get; set; }
     public ObservableCollection<ChatMessage> Messages { get; } = [];
     public WebView2 Browser { get; } = new();
 

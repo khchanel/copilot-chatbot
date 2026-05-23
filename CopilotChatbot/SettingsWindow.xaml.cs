@@ -31,6 +31,8 @@ public partial class SettingsWindow : Window
         SystemPromptBox.Text = Settings.DefaultSystemPrompt ?? "";
         EnableDebugLoggingCheckBox.IsChecked = Settings.EnableDebugLogging;
         WorkingDirectoryBox.Text = Settings.WorkingDirectory ?? "";
+        AgentDirsList.ItemsSource = Settings.AgentDirectories;
+        SkillDirsList.ItemsSource = Settings.SkillDirectories;
         LogPathTextBlock.Text = _debugLogger.CurrentLogPath;
     }
 
@@ -147,6 +149,44 @@ public partial class SettingsWindow : Window
         };
         if (dialog.ShowDialog() == true)
             WorkingDirectoryBox.Text = dialog.FolderName;
+    }
+
+    private void BrowseAgentDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "Select Agent Folder" };
+        if (dialog.ShowDialog() == true)
+            AgentDirBox.Text = dialog.FolderName;
+    }
+
+    private void AddAgentDir_Click(object sender, RoutedEventArgs e)
+    {
+        AddUnique(Settings.AgentDirectories, AgentDirBox.Text);
+        AgentDirBox.Clear();
+    }
+
+    private void RemoveAgentDir_Click(object sender, RoutedEventArgs e)
+    {
+        if (AgentDirsList.SelectedItem is string dir)
+            Settings.AgentDirectories.Remove(dir);
+    }
+
+    private void BrowseSkillDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "Select Skill Folder" };
+        if (dialog.ShowDialog() == true)
+            SkillDirBox.Text = dialog.FolderName;
+    }
+
+    private void AddSkillDir_Click(object sender, RoutedEventArgs e)
+    {
+        AddUnique(Settings.SkillDirectories, SkillDirBox.Text);
+        SkillDirBox.Clear();
+    }
+
+    private void RemoveSkillDir_Click(object sender, RoutedEventArgs e)
+    {
+        if (SkillDirsList.SelectedItem is string dir)
+            Settings.SkillDirectories.Remove(dir);
     }
 
     private void OpenLogFolder_Click(object sender, RoutedEventArgs e)

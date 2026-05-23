@@ -32,21 +32,22 @@ public sealed class HtmlRenderer
 html, body { margin:0; padding:0; background:{{bg}}; color:{{text}}; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 main { padding:10px 14px; }
 .msg { margin:0 0 7px 0; border:1px solid {{border}}; border-radius:8px; background:{{card}}; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.07); }
-.head, details > summary.head { display:flex; align-items:center; gap:8px; padding:6px 11px; border-bottom:1px solid {{border}}; font-size:12px; color:{{muted}}; }
+.head, details > summary.head { display:flex; align-items:center; gap:5px; padding:3px 8px; border-bottom:1px solid {{border}}; font-size:11px; color:{{muted}}; }
 details > summary.head { cursor:pointer; user-select:none; list-style:none; border-bottom:0; }
 details > summary.head::-webkit-details-marker { display:none; }
 details[open] > summary.head { border-bottom:1px solid {{border}}; }
-.xicon { font-size:9px; opacity:.5; transition:transform .14s; flex-shrink:0; }
+.xicon { font-size:8px; opacity:.45; transition:transform .14s; flex-shrink:0; }
 details[open] .xicon { transform:rotate(90deg); }
-.avatar { width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; font-weight:800; }
-.kind-label { font-weight:700; font-size:11px; letter-spacing:.05em; text-transform:uppercase; flex-shrink:0; }
-.preview { font-size:11px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.avatar { width:17px; height:17px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; flex-shrink:0; font-weight:800; }
+.kind-label { font-weight:700; font-size:10px; letter-spacing:.04em; text-transform:uppercase; flex-shrink:0; }
+.preview { font-size:10px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
 details[open] .preview { display:none; }
-.ts { margin-left:auto; font-size:11px; opacity:.65; flex-shrink:0; }
+.ts { margin-left:auto; font-size:10px; opacity:.6; flex-shrink:0; }
 details > summary.head .ts { margin-left:0; }
-.open-btn { border:1px solid {{border}}; color:{{text}}; background:{{btnBg}}; border-radius:5px; padding:2px 8px; cursor:pointer; font:600 10px/1 inherit; margin-left:auto; }
+.open-btn { border:none; background:transparent; color:{{muted}}; padding:1px 3px; cursor:pointer; line-height:0; display:inline-flex; align-items:center; margin-left:auto; opacity:.5; flex-shrink:0; }
 details > summary.head .open-btn { margin-left:6px; }
-.open-btn:hover { opacity:.75; }
+.open-btn:hover { opacity:1; color:{{text}}; }
+main.streaming .open-btn { pointer-events:none; opacity:.2; cursor:not-allowed; }
 .content { padding:0; }
 .frame-body { margin:0; padding:8px 12px; color:{{text}}; background:{{card}}; font:14px/1.42 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow-wrap:anywhere; }
 .frame-body h1,.frame-body h2,.frame-body h3,.frame-body h4,.frame-body h5,.frame-body h6 { margin:.7em 0 .35em; line-height:1.25; font-weight:700; }
@@ -147,7 +148,7 @@ document.addEventListener('click', e => {
       <span class="kind-label">{{kindHtml}}</span>
       <span class="preview">{{preview}}</span>
       <span class="ts">{{time}}</span>
-      <button class="open-btn" data-open-id="{{msgId}}">Open ↗</button>
+      <button class="open-btn" data-open-id="{{msgId}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
     </summary>
     <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
   </details>
@@ -161,7 +162,7 @@ document.addEventListener('click', e => {
     <div class="avatar">{{avatarHtml}}</div>
     <span class="kind-label">{{kindHtml}}</span>
     <span class="ts">{{time}}</span>
-    <button class="open-btn" data-open-id="{{msgId}}">Open ↗</button>
+    <button class="open-btn" data-open-id="{{msgId}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
   </div>
   <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
 </article>
@@ -228,7 +229,8 @@ document.addEventListener('click', e => {
         var css = $$"""
 <style>
 *, *::before, *::after { box-sizing: border-box; }
-body { margin:0; padding:9px 12px; color:{{foreground}}; background:{{background}}; font:14px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow-wrap:anywhere; }
+html { height:100%; }
+body { margin:0; padding:9px 12px; color:{{foreground}}; background:{{background}}; font:14px/1.45 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow-wrap:anywhere; min-height:100%; }
 h1,h2,h3,h4,h5,h6 { margin:.8em 0 .4em; line-height:1.3; font-weight:700; }
 h1 { font-size:1.5em; } h2 { font-size:1.25em; } h3 { font-size:1.1em; } h4 { font-size:1em; }
 p { margin:.35em 0 .75em; }
@@ -245,6 +247,7 @@ ul, ol { padding-left:1.7em; margin:.35em 0 .75em; }
 li { margin:.25em 0; }
 hr { border:0; border-top:1px solid {{border}}; margin:1em 0; }
 img { max-width:100%; border-radius:6px; }
+iframe { width:100% !important; min-height:calc(100vh - 3em) !important; border:1px solid {{border}}; border-radius:6px; display:block; resize:vertical; overflow:auto; }
 </style>
 """;
 
