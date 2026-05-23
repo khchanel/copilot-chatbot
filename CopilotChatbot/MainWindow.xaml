@@ -405,6 +405,11 @@
                             <TextBlock Text="New Chat" />
                         </StackPanel>
                     </Button>
+                    <Button x:Name="ClearChatButton" Style="{StaticResource IconButton}"
+                            ToolTip="Clear chat history" Click="ClearChatButton_Click">
+                        <ui:SymbolIcon Symbol="Delete20" FontSize="18"
+                                       Foreground="{DynamicResource TextBrush}" />
+                    </Button>
                     <Button x:Name="RefreshModelsButton" Style="{StaticResource IconButton}"
                             ToolTip="Refresh models" Click="RefreshModelsButton_Click">
                         <ui:SymbolIcon Symbol="ArrowClockwise20" FontSize="18"

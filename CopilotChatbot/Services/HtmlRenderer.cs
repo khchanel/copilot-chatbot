@@ -21,6 +21,10 @@ public sealed class HtmlRenderer
         var text   = darkTheme ? "#E6EDF3"  : "#1F2328";
         var muted  = darkTheme ? "#8B949E"  : "#57606A";
         var btnBg  = darkTheme ? "#21262D"  : "#F6F8FA";
+        // rgba colours used for icons — avoids element-level opacity which composites
+        // the tinted colour against the coloured header background in dark mode.
+        var iconDim   = darkTheme ? "rgba(230,237,243,0.45)" : "rgba(87,96,106,0.50)";
+        var iconHover = darkTheme ? "#E6EDF3" : "#1F2328";
 
         return $$"""
 <!doctype html>
@@ -36,7 +40,7 @@ main { padding:10px 14px; }
 details > summary.head { cursor:pointer; user-select:none; list-style:none; border-bottom:0; }
 details > summary.head::-webkit-details-marker { display:none; }
 details[open] > summary.head { border-bottom:1px solid {{border}}; }
-.xicon { font-size:8px; opacity:.45; transition:transform .14s; flex-shrink:0; }
+.xicon { font-size:8px; color:{{iconDim}}; transition:transform .14s; flex-shrink:0; }
 details[open] .xicon { transform:rotate(90deg); }
 .avatar { width:17px; height:17px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; flex-shrink:0; font-weight:800; }
 .kind-label { font-weight:700; font-size:10px; letter-spacing:.04em; text-transform:uppercase; flex-shrink:0; }
@@ -44,10 +48,11 @@ details[open] .xicon { transform:rotate(90deg); }
 details[open] .preview { display:none; }
 .ts { margin-left:auto; font-size:10px; opacity:.6; flex-shrink:0; }
 details > summary.head .ts { margin-left:0; }
-.open-btn { border:none; background:transparent; color:{{muted}}; padding:1px 3px; cursor:pointer; line-height:0; display:inline-flex; align-items:center; margin-left:auto; opacity:.5; flex-shrink:0; }
+details[open] > summary.head .ts { margin-left:auto; }
+.open-btn { border:none; background:transparent; color:{{iconDim}}; padding:1px 3px; cursor:pointer; line-height:0; display:inline-flex; align-items:center; margin-left:auto; flex-shrink:0; }
 details > summary.head .open-btn { margin-left:6px; }
-.open-btn:hover { opacity:1; color:{{text}}; }
-main.streaming .open-btn { pointer-events:none; opacity:.2; cursor:not-allowed; }
+.open-btn:hover { color:{{iconHover}}; }
+main.streaming .open-btn { pointer-events:none; color:{{iconDim}}; opacity:.35; cursor:not-allowed; }
 .content { padding:0; }
 .frame-body { margin:0; padding:8px 12px; color:{{text}}; background:{{card}}; font:14px/1.42 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow-wrap:anywhere; }
 .frame-body h1,.frame-body h2,.frame-body h3,.frame-body h4,.frame-body h5,.frame-body h6 { margin:.7em 0 .35em; line-height:1.25; font-weight:700; }
@@ -133,15 +138,18 @@ document.addEventListener('click', e => {
         var kindHtml   = WebUtility.HtmlEncode(kindLabel);
         var msgId      = message.Id;
 
-        // Reasoning, Tool, Intent, System, Error are collapsed by default
-        bool collapsible = message.Kind is not (ChatMessageKind.User or ChatMessageKind.Assistant);
+        // Reasoning, Tool, Intent, System, Error are collapsed by default.
+        // Assistant messages use details but start open (collapsible by user).
+        bool collapsible = message.Kind is not ChatMessageKind.User;
+        bool openByDefault = message.Kind is ChatMessageKind.Assistant;
 
         if (collapsible)
         {
             var preview = WebUtility.HtmlEncode(GetPreview(message.Content));
+            var openAttr = openByDefault ? " open" : "";
             return $$"""
 <article class="msg {{css}}">
-  <details>
+  <details{{openAttr}}>
     <summary class="head">
       <span class="xicon">▶</span>
       <div class="avatar">{{avatarHtml}}</div>

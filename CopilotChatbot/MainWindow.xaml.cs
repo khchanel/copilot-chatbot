@@ -81,6 +81,16 @@ public partial class MainWindow : Window
 
     private void NewChatButton_Click(object sender, RoutedEventArgs e) => _ = AddChatAsync();
 
+    private void ClearChatButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (CurrentChat is { } chat)
+        {
+            chat.Messages.Clear();
+            chat.IsPageInitialized = false;
+            RenderCurrentChat();
+        }
+    }
+
     private async void RefreshModelsButton_Click(object sender, RoutedEventArgs e) => await RefreshModelsAsync(showErrorDialog: true, allowFallback: false);
 
     private void ThemeButton_Click(object sender, RoutedEventArgs e)
