@@ -20,6 +20,8 @@ public sealed class ChatMessage
     public ChatMessageKind Kind { get; init; }
     public string Content { get; set; } = "";
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
+    /// <summary>Set when the response turn is fully received. Null while streaming or for user messages.</summary>
+    public DateTimeOffset? CompletedAt { get; set; }
 }
 
 public sealed record McpServerInfo(string Name, string Status, IReadOnlyList<string> Tools);

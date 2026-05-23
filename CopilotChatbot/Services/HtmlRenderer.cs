@@ -11,20 +11,56 @@ public sealed class HtmlRenderer
         .UseAdvancedExtensions()
         .Build();
 
+    // All theme-sensitive colours in one place.
+    // Used by RenderDocument (baked into :root) and GetThemeUpdateScript (injected via JS).
+    private static Dictionary<string, string> GetThemeVarMap(bool dark) => new()
+    {
+        ["--bg"]          = dark ? "#111827" : "#FFFFFF",
+        ["--card"]        = dark ? "#161B22" : "#FFFFFF",
+        ["--border"]      = dark ? "#30363D" : "#D0D7DE",
+        ["--text"]        = dark ? "#E6EDF3" : "#1F2328",
+        ["--muted"]       = dark ? "#8B949E" : "#57606A",
+        ["--btn-bg"]      = dark ? "#21262D" : "#F6F8FA",
+        ["--icon-dim"]    = dark ? "rgba(230,237,243,0.45)" : "rgba(87,96,106,0.50)",
+        ["--icon-hover"]  = dark ? "#E6EDF3" : "#1F2328",
+        ["--code-bg"]     = dark ? "#0D1117" : "#F6F8FA",
+        ["--th-bg"]       = dark ? "#21262D" : "#F0F3F6",
+        ["--tr-even"]     = dark ? "#0D1117" : "#F8FAFC",
+        ["--link"]        = dark ? "#58A6FF" : "#0969DA",
+        ["--user-head"]   = dark ? "#0D2A4D" : "#EFF6FF",
+        ["--user-avatar"] = dark ? "#1B4F8A" : "#3B82F6",
+        ["--user-label"]  = dark ? "#60A5FA" : "#1D4ED8",
+        ["--asst-head"]   = dark ? "#0D2E1F" : "#F0FDF4",
+        ["--asst-avatar"] = dark ? "#166534" : "#22C55E",
+        ["--asst-label"]  = dark ? "#4ADE80" : "#15803D",
+        ["--rsn-head"]    = dark ? "#2D1F00" : "#FFFBEB",
+        ["--rsn-avatar"]  = dark ? "#854D0E" : "#F59E0B",
+        ["--rsn-label"]   = dark ? "#FCD34D" : "#92400E",
+        ["--tool-head"]   = dark ? "#1E1040" : "#F5F3FF",
+        ["--tool-avatar"] = dark ? "#6D28D9" : "#8B5CF6",
+        ["--tool-label"]  = dark ? "#A78BFA" : "#5B21B6",
+        ["--err-head"]    = dark ? "#2D0E0E" : "#FFF5F5",
+        ["--err-avatar"]  = dark ? "#9B1C1C" : "#EF4444",
+        ["--err-label"]   = dark ? "#FCA5A5" : "#991B1B",
+        ["--sys-head"]    = dark ? "#1C2128" : "#F6F8FA",
+        ["--sys-avatar"]  = dark ? "#484F58" : "#6E7781",
+    };
+
+    /// <summary>Returns a JS snippet that updates all CSS custom properties on the root element
+    /// without reloading the page — preserving scroll position and <details> open state.</summary>
+    public string GetThemeUpdateScript(bool dark)
+    {
+        var sb = new StringBuilder("(function(){var s=document.documentElement.style;");
+        foreach (var (k, v) in GetThemeVarMap(dark))
+            sb.Append($"s.setProperty('{k}','{v}');");
+        sb.Append("})();");
+        return sb.ToString();
+    }
+
     public string RenderDocument(IEnumerable<ChatMessage> messages, bool darkTheme)
     {
         var messagesHtml = RenderBody(messages, darkTheme);
-
-        var bg     = darkTheme ? "#111827" : "#FFFFFF";
-        var card   = darkTheme ? "#161B22" : "#FFFFFF";
-        var border = darkTheme ? "#30363D"  : "#D0D7DE";
-        var text   = darkTheme ? "#E6EDF3"  : "#1F2328";
-        var muted  = darkTheme ? "#8B949E"  : "#57606A";
-        var btnBg  = darkTheme ? "#21262D"  : "#F6F8FA";
-        // rgba colours used for icons — avoids element-level opacity which composites
-        // the tinted colour against the coloured header background in dark mode.
-        var iconDim   = darkTheme ? "rgba(230,237,243,0.45)" : "rgba(87,96,106,0.50)";
-        var iconHover = darkTheme ? "#E6EDF3" : "#1F2328";
+        var rootVars = ":root{" + string.Join("", GetThemeVarMap(darkTheme).Select(kv => $"{kv.Key}:{kv.Value};")) + "}";
 
         return $$"""
 <!doctype html>
@@ -32,66 +68,68 @@ public sealed class HtmlRenderer
 <head>
 <meta charset="utf-8">
 <style>
+{{rootVars}}
 *, *::before, *::after { box-sizing: border-box; }
-html, body { margin:0; padding:0; background:{{bg}}; color:{{text}}; font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 main { padding:10px 14px; }
-.msg { margin:0 0 7px 0; border:1px solid {{border}}; border-radius:8px; background:{{card}}; overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.07); }
-.head, details > summary.head { display:flex; align-items:center; gap:5px; padding:3px 8px; border-bottom:1px solid {{border}}; font-size:11px; color:{{muted}}; }
+.msg { margin:0 0 7px 0; border:1px solid var(--border); border-radius:8px; background:var(--card); overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.07); }
+.head, details > summary.head { display:flex; align-items:center; gap:5px; padding:3px 8px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); }
 details > summary.head { cursor:pointer; user-select:none; list-style:none; border-bottom:0; }
 details > summary.head::-webkit-details-marker { display:none; }
-details[open] > summary.head { border-bottom:1px solid {{border}}; }
-.xicon { font-size:8px; color:{{iconDim}}; transition:transform .14s; flex-shrink:0; }
+details[open] > summary.head { border-bottom:1px solid var(--border); }
+.xicon { font-size:8px; color:var(--icon-dim); transition:transform .14s; flex-shrink:0; }
 details[open] .xicon { transform:rotate(90deg); }
 .avatar { width:17px; height:17px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; flex-shrink:0; font-weight:800; }
 .kind-label { font-weight:700; font-size:10px; letter-spacing:.04em; text-transform:uppercase; flex-shrink:0; }
 .preview { font-size:10px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
 details[open] .preview { display:none; }
 .ts { margin-left:auto; font-size:10px; opacity:.6; flex-shrink:0; }
+.dur { font-size:10px; opacity:.55; flex-shrink:0; }
 details > summary.head .ts { margin-left:0; }
 details[open] > summary.head .ts { margin-left:auto; }
-.open-btn { border:none; background:transparent; color:{{iconDim}}; padding:1px 3px; cursor:pointer; line-height:0; display:inline-flex; align-items:center; margin-left:auto; flex-shrink:0; }
+.open-btn { border:none; background:transparent; color:var(--icon-dim); padding:1px 3px; cursor:pointer; line-height:0; display:inline-flex; align-items:center; margin-left:auto; flex-shrink:0; }
 details > summary.head .open-btn { margin-left:6px; }
-.open-btn:hover { color:{{iconHover}}; }
-main.streaming .open-btn { pointer-events:none; color:{{iconDim}}; opacity:.35; cursor:not-allowed; }
+.open-btn:hover { color:var(--icon-hover); }
+main.streaming .open-btn { pointer-events:none; color:var(--icon-dim); opacity:.35; cursor:not-allowed; }
 .content { padding:0; }
-.frame-body { margin:0; padding:8px 12px; color:{{text}}; background:{{card}}; font:14px/1.42 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow-wrap:anywhere; }
+.frame-body { margin:0; padding:8px 12px; color:var(--text); background:var(--card); font:14px/1.42 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; overflow-wrap:anywhere; }
 .frame-body h1,.frame-body h2,.frame-body h3,.frame-body h4,.frame-body h5,.frame-body h6 { margin:.7em 0 .35em; line-height:1.25; font-weight:700; }
 .frame-body h1 { font-size:1.45em; } .frame-body h2 { font-size:1.22em; } .frame-body h3 { font-size:1.08em; } .frame-body h4 { font-size:1em; }
 .frame-body p { margin:.25em 0 .55em; }
-.frame-body pre { background:{{(darkTheme ? "#0D1117" : "#F6F8FA")}}; border:1px solid {{border}}; border-radius:8px; padding:10px 12px; overflow-x:auto; margin:.5em 0; }
-.frame-body pre, .frame-body code { font-family:ui-monospace, 'Cascadia Code', Consolas, monospace; font-size:13px; color:{{text}}; }
-.frame-body code:not(pre code) { background:{{(darkTheme ? "#0D1117" : "#F6F8FA")}}; border:1px solid {{border}}; border-radius:4px; padding:1px 5px; font-size:12.5px; }
-.frame-body blockquote { border-left:3px solid {{border}}; margin:.5em 0; padding:3px 0 3px 12px; color:{{muted}}; }
+.frame-body pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; overflow-x:auto; margin:.5em 0; }
+.frame-body pre, .frame-body code { font-family:ui-monospace, 'Cascadia Code', Consolas, monospace; font-size:13px; color:var(--text); }
+.frame-body code:not(pre code) { background:var(--code-bg); border:1px solid var(--border); border-radius:4px; padding:1px 5px; font-size:12.5px; }
+.frame-body blockquote { border-left:3px solid var(--border); margin:.5em 0; padding:3px 0 3px 12px; color:var(--muted); }
 .frame-body table { border-collapse:collapse; width:100%; margin:.5em 0; font-size:13px; }
-.frame-body th { background:{{(darkTheme ? "#21262D" : "#F0F3F6")}}; font-weight:600; text-align:left; }
-.frame-body td, .frame-body th { border:1px solid {{border}}; padding:6px 10px; }
-.frame-body tr:nth-child(even) td { background:{{(darkTheme ? "#0D1117" : "#F8FAFC")}}; }
-.frame-body a { color:{{(darkTheme ? "#58A6FF" : "#0969DA")}}; text-decoration:none; }
+.frame-body th { background:var(--th-bg); font-weight:600; text-align:left; }
+.frame-body td, .frame-body th { border:1px solid var(--border); padding:6px 10px; }
+.frame-body tr:nth-child(even) td { background:var(--tr-even); }
+.frame-body a { color:var(--link); text-decoration:none; }
 .frame-body a:hover { text-decoration:underline; }
 .frame-body ul, .frame-body ol { padding-left:1.55em; margin:.25em 0 .55em; }
 .frame-body li { margin:.18em 0; }
-.frame-body hr { border:0; border-top:1px solid {{border}}; margin:.8em 0; }
+.frame-body hr { border:0; border-top:1px solid var(--border); margin:.8em 0; }
 .frame-body img { max-width:100%; border-radius:6px; }
 .frame-body > :first-child { margin-top:0; }
 .frame-body > :last-child { margin-bottom:0; }
-.user .head, .user details > summary.head { background:{{(darkTheme ? "#0D2A4D" : "#EFF6FF")}}; }
-.user .avatar { background:{{(darkTheme ? "#1B4F8A" : "#3B82F6")}}; color:#FFF; }
-.user .kind-label { color:{{(darkTheme ? "#60A5FA" : "#1D4ED8")}}; }
-.assistant .head, .assistant details > summary.head { background:{{(darkTheme ? "#0D2E1F" : "#F0FDF4")}}; }
-.assistant .avatar { background:{{(darkTheme ? "#166534" : "#22C55E")}}; color:#FFF; }
-.assistant .kind-label { color:{{(darkTheme ? "#4ADE80" : "#15803D")}}; }
-.reasoning .head, .reasoning details > summary.head { background:{{(darkTheme ? "#2D1F00" : "#FFFBEB")}}; }
-.reasoning .avatar { background:{{(darkTheme ? "#854D0E" : "#F59E0B")}}; color:#FFF; }
-.reasoning .kind-label { color:{{(darkTheme ? "#FCD34D" : "#92400E")}}; }
-.tool .head, .tool details > summary.head, .intent .head, .intent details > summary.head { background:{{(darkTheme ? "#1E1040" : "#F5F3FF")}}; }
-.tool .avatar, .intent .avatar { background:{{(darkTheme ? "#6D28D9" : "#8B5CF6")}}; color:#FFF; }
-.tool .kind-label, .intent .kind-label { color:{{(darkTheme ? "#A78BFA" : "#5B21B6")}}; }
-.error .head, .error details > summary.head { background:{{(darkTheme ? "#2D0E0E" : "#FFF5F5")}}; }
-.error .avatar { background:{{(darkTheme ? "#9B1C1C" : "#EF4444")}}; color:#FFF; }
-.error .kind-label { color:{{(darkTheme ? "#FCA5A5" : "#991B1B")}}; }
-.system .head, .system details > summary.head { background:{{(darkTheme ? "#1C2128" : "#F6F8FA")}}; }
-.system .avatar { background:{{(darkTheme ? "#484F58" : "#6E7781")}}; color:#FFF; }
-.system .kind-label { color:{{muted}}; }
+.user .head, .user details > summary.head { background:var(--user-head); }
+.user .avatar { background:var(--user-avatar); color:#FFF; }
+.user .kind-label { color:var(--user-label); }
+.assistant .head, .assistant details > summary.head { background:var(--asst-head); }
+.assistant .avatar { background:var(--asst-avatar); color:#FFF; }
+.assistant .kind-label { color:var(--asst-label); }
+.reasoning .head, .reasoning details > summary.head { background:var(--rsn-head); }
+.reasoning .avatar { background:var(--rsn-avatar); color:#FFF; }
+.reasoning .kind-label { color:var(--rsn-label); }
+.tool .head, .tool details > summary.head, .intent .head, .intent details > summary.head { background:var(--tool-head); }
+.tool .avatar, .intent .avatar { background:var(--tool-avatar); color:#FFF; }
+.tool .kind-label, .intent .kind-label { color:var(--tool-label); }
+.error .head, .error details > summary.head { background:var(--err-head); }
+.error .avatar { background:var(--err-avatar); color:#FFF; }
+.error .kind-label { color:var(--err-label); }
+.system .head, .system details > summary.head { background:var(--sys-head); }
+.system .avatar { background:var(--sys-avatar); color:#FFF; }
+.system .kind-label { color:var(--muted); }
 </style>
 </head>
 <body><main>{{messagesHtml}}</main>
@@ -123,6 +161,7 @@ document.addEventListener('click', e => {
     {
         var css = message.Kind.ToString().ToLowerInvariant();
         var time = WebUtility.HtmlEncode(message.CreatedAt.ToString("g"));
+        var durHtml = FormatDuration(message);
         var contentHtml = RenderInlineContent(message);
         var (avatar, kindLabel) = message.Kind switch
         {
@@ -155,7 +194,7 @@ document.addEventListener('click', e => {
       <div class="avatar">{{avatarHtml}}</div>
       <span class="kind-label">{{kindHtml}}</span>
       <span class="preview">{{preview}}</span>
-      <span class="ts">{{time}}</span>
+      <span class="ts">{{time}}</span>{{(durHtml.Length > 0 ? $"\n      <span class=\"dur\">· {durHtml}</span>" : "")}}
       <button class="open-btn" data-open-id="{{msgId}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
     </summary>
     <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
@@ -169,12 +208,22 @@ document.addEventListener('click', e => {
   <div class="head">
     <div class="avatar">{{avatarHtml}}</div>
     <span class="kind-label">{{kindHtml}}</span>
-    <span class="ts">{{time}}</span>
+    <span class="ts">{{time}}</span>{{(durHtml.Length > 0 ? $"\n    <span class=\"dur\">· {durHtml}</span>" : "")}}
     <button class="open-btn" data-open-id="{{msgId}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
   </div>
   <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
 </article>
 """;
+    }
+
+    private static string FormatDuration(ChatMessage message)
+    {
+        if (message.CompletedAt is not { } completed) return "";
+        var span = completed - message.CreatedAt;
+        if (span.TotalSeconds < 0) return "";
+        if (span.TotalSeconds < 60)
+            return $"{span.TotalSeconds:0.#}s";
+        return $"{(int)span.TotalMinutes}m {span.Seconds}s";
     }
 
     private string RenderInlineContent(ChatMessage message)

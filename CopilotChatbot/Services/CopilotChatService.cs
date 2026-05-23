@@ -846,6 +846,22 @@ public sealed class CopilotChatService : IAsyncDisposable
         App.Current.Dispatcher.Invoke(() =>
         {
             chat.IsPending = isPending;
+            if (!isPending)
+            {
+                // Stamp completion time on all messages in the current response turn
+                // (everything after the last user message that was not yet stamped).
+                var now = DateTimeOffset.Now;
+                var lastUserIdx = -1;
+                for (var i = chat.Messages.Count - 1; i >= 0; i--)
+                {
+                    if (chat.Messages[i].Kind == ChatMessageKind.User) { lastUserIdx = i; break; }
+                }
+                foreach (var msg in chat.Messages.Skip(lastUserIdx + 1))
+                {
+                    if (msg.CompletedAt is null)
+                        msg.CompletedAt = now;
+                }
+            }
             SessionPendingChanged?.Invoke(chat, isPending);
             if (!isPending)
                 StatusChanged?.Invoke(chat, null);

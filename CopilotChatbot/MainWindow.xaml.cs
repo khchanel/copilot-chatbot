@@ -355,6 +355,10 @@ public partial class MainWindow : Window
             if (ReferenceEquals(chat, CurrentChat))
             {
                 UpdateInputState();
+                // Re-render once after the response completes so that CompletedAt
+                // (stamped in SetPending just before this event fires) appears in the header.
+                if (!isPending)
+                    RenderChat(chat);
             }
         });
     }
@@ -737,7 +741,12 @@ public partial class MainWindow : Window
                     var savedY = el.scrollTop;
                     var m = document.querySelector('main');
                     if (!m) return;
+                    // Snapshot which <details> are closed so we can restore after innerHTML replace
+                    var closedSet = new Set();
+                    m.querySelectorAll('details').forEach(function(d, i) { if (!d.open) closedSet.add(i); });
                     m.innerHTML = {{jsonHtml}};
+                    // Restore collapsed state — new messages are appended at the end with their own default
+                    m.querySelectorAll('details').forEach(function(d, i) { if (closedSet.has(i)) d.removeAttribute('open'); });
                     document.querySelectorAll('iframe').forEach(f => {
                         try { f.style.height = Math.max(40, f.contentWindow.document.documentElement.scrollHeight + 10) + 'px'; } catch {}
                     });
@@ -846,19 +855,22 @@ public partial class MainWindow : Window
         SetBrush("DisabledControlBrush", dark ? "#263244" : "#E5E7EB");
         SetBrush("DisabledBorderBrush", dark ? "#39465A" : "#D1D5DB");
         SetBrush("DisabledTextBrush", dark ? "#7F8A99" : "#8A94A3");
-        // Force full re-render of all chats so the new theme CSS is applied
+        // Update WebView2 default background colour for chrome rendered before content,
+        // then inject the CSS variable update script so all open tabs repaint instantly
+        // without a full reload (scroll position and <details> open state are preserved).
         var bgColor = dark
             ? System.Drawing.Color.FromArgb(255, 17, 24, 39)
             : System.Drawing.Color.White;
+        var themeScript = _htmlRenderer.GetThemeUpdateScript(dark);
         foreach (var tab in ChatTabs.Items.OfType<TabItem>())
         {
             if (tab.Tag is ChatSessionView c)
             {
-                c.IsPageInitialized = false;
                 c.Browser.DefaultBackgroundColor = bgColor;
+                if (c.IsPageInitialized)
+                    _ = c.Browser.ExecuteScriptAsync(themeScript);
             }
         }
-        RenderCurrentChat();
     }
 
     private static void SwapWpfUiTheme(bool dark)
