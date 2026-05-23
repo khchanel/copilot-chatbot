@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly DebugLogger _debugLogger = new();
     private readonly CopilotChatService _copilot;
     private readonly List<ModelChoice> _models = [];
+    private readonly Dictionary<ChatSessionView, long> _renderRevisions = [];
     private AppSettings _settings;
     private bool _isDarkTheme;
     private bool _showDetailMessages;
@@ -492,6 +493,7 @@ public partial class MainWindow : Window
         // Close the backing session after the UI is already updated
         if (tab.Tag is ChatSessionView chat)
         {
+            _renderRevisions.Remove(chat);
             try { await _copilot.CloseSessionAsync(chat); } catch { /* ignore on close */ }
         }
     }
@@ -701,7 +703,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RenderChat(ChatSessionView chat) => _ = RenderChatAsync(chat);
+    private void RenderChat(ChatSessionView chat)
+    {
+        var revision = NextRenderRevision(chat);
+        _ = RenderChatAsync(chat, revision);
+    }
 
     private static readonly IReadOnlySet<ChatMessageKind> DetailMessageKinds = new HashSet<ChatMessageKind>
     {
@@ -713,9 +719,13 @@ public partial class MainWindow : Window
     private IEnumerable<ChatMessage> FilterMessages(IEnumerable<ChatMessage> messages) =>
         _showDetailMessages ? messages : messages.Where(m => !DetailMessageKinds.Contains(m.Kind));
 
-    private async Task RenderChatAsync(ChatSessionView chat)
+    private async Task RenderChatAsync(ChatSessionView chat, long revision)
     {
         if (chat.Browser.CoreWebView2 is null)
+        {
+            return;
+        }
+        if (!IsLatestRender(chat, revision))
         {
             return;
         }
@@ -729,11 +739,19 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Incremental update: update only <main> content and preserve the scroll position
+        // Incremental update: patch message nodes in-place (append/update/reorder/remove)
+        // and preserve the scroll position.
         try
         {
-            var bodyHtml = _htmlRenderer.RenderBody(messages, _isDarkTheme);
-            var jsonHtml = System.Text.Json.JsonSerializer.Serialize(bodyHtml);
+            var payload = messages.Select(m => new BrowserMessagePatch(
+                m.Id,
+                BuildRenderSignature(m),
+                _htmlRenderer.RenderMessageFragment(m, _isDarkTheme))).ToArray();
+            var jsonPatch = System.Text.Json.JsonSerializer.Serialize(payload);
+            if (!IsLatestRender(chat, revision))
+            {
+                return;
+            }
             await chat.Browser.ExecuteScriptAsync($$"""
                 (function() {
                     var el = document.documentElement;
@@ -741,12 +759,87 @@ public partial class MainWindow : Window
                     var savedY = el.scrollTop;
                     var m = document.querySelector('main');
                     if (!m) return;
-                    // Snapshot which <details> are closed so we can restore after innerHTML replace
-                    var closedSet = new Set();
-                    m.querySelectorAll('details').forEach(function(d, i) { if (!d.open) closedSet.add(i); });
-                    m.innerHTML = {{jsonHtml}};
-                    // Restore collapsed state — new messages are appended at the end with their own default
-                    m.querySelectorAll('details').forEach(function(d, i) { if (closedSet.has(i)) d.removeAttribute('open'); });
+
+                    var patches = {{jsonPatch}};
+                    var desired = new Set();
+
+                    function upsertNode(patch) {
+                        var id = patch.Id;
+                        desired.add(id);
+                        var selector = 'article[data-mid=\"' + CSS.escape(id) + '\"]';
+                        var node = m.querySelector(selector);
+                        var oldOpen = null;
+                        if (node) {
+                            var oldDetails = node.querySelector('details');
+                            oldOpen = oldDetails ? oldDetails.open : null;
+                        }
+
+                        if (!node) {
+                            var tpl = document.createElement('template');
+                            tpl.innerHTML = patch.Html;
+                            node = tpl.content.firstElementChild;
+                            if (!node) return null;
+                            node.dataset.renderSig = patch.Signature;
+                            m.appendChild(node);
+                        } else if (node.dataset.renderSig !== patch.Signature) {
+                            var repl = document.createElement('template');
+                            repl.innerHTML = patch.Html;
+                            var next = repl.content.firstElementChild;
+                            if (!next) return node;
+                            var curDetails = node.querySelector('details');
+                            var nextDetails = next.querySelector('details');
+
+                            // For streaming updates, patch in-place so only the active
+                            // response body changes and iframe loader stays local.
+                            if (curDetails && nextDetails) {
+                                node.className = next.className;
+                                node.id = next.id;
+                                node.dataset.mid = next.dataset.mid || id;
+                                node.dataset.renderSig = patch.Signature;
+
+                                var curSummary = curDetails.querySelector('summary.head');
+                                var nextSummary = nextDetails.querySelector('summary.head');
+                                if (curSummary && nextSummary) {
+                                    curSummary.innerHTML = nextSummary.innerHTML;
+                                }
+
+                                var curBody = curDetails.querySelector('.frame-body');
+                                var nextBody = nextDetails.querySelector('.frame-body');
+                                if (curBody && nextBody) {
+                                    curBody.innerHTML = nextBody.innerHTML;
+                                }
+
+                                if (oldOpen !== null) {
+                                    curDetails.open = oldOpen;
+                                }
+                            } else {
+                                next.dataset.renderSig = patch.Signature;
+                                node.replaceWith(next);
+                                node = next;
+                                if (oldOpen !== null) {
+                                    var replacedDetails = node.querySelector('details');
+                                    if (replacedDetails) replacedDetails.open = oldOpen;
+                                }
+                            }
+                        }
+                        return node;
+                    }
+
+                    patches.forEach(function(patch, idx) {
+                        var node = upsertNode(patch);
+                        if (!node) return;
+                        var expected = m.children[idx] || null;
+                        if (node !== expected) {
+                            m.insertBefore(node, expected);
+                        }
+                    });
+
+                    Array.from(m.querySelectorAll('article[data-mid]')).forEach(function(node) {
+                        if (!desired.has(node.dataset.mid)) {
+                            node.remove();
+                        }
+                    });
+
                     document.querySelectorAll('iframe').forEach(f => {
                         try { f.style.height = Math.max(40, f.contentWindow.document.documentElement.scrollHeight + 10) + 'px'; } catch {}
                     });
@@ -759,6 +852,28 @@ public partial class MainWindow : Window
             // Swallow: CoreWebView2 may not be ready during rapid streaming
         }
     }
+
+    private long NextRenderRevision(ChatSessionView chat)
+    {
+        var next = _renderRevisions.GetValueOrDefault(chat) + 1;
+        _renderRevisions[chat] = next;
+        return next;
+    }
+
+    private bool IsLatestRender(ChatSessionView chat, long revision) =>
+        _renderRevisions.GetValueOrDefault(chat) == revision;
+
+    private static string BuildRenderSignature(ChatMessage message)
+    {
+        var completed = message.CompletedAt?.ToUnixTimeMilliseconds().ToString() ?? "";
+        return string.Join("|",
+            message.Kind.ToString(),
+            message.Content,
+            message.CreatedAt.ToUnixTimeMilliseconds().ToString(),
+            completed);
+    }
+
+    private sealed record BrowserMessagePatch(string Id, string Signature, string Html);
 
     private void ShowDetailsCheckBox_Click(object sender, RoutedEventArgs e)
     {

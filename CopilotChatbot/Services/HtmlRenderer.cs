@@ -110,6 +110,13 @@ main.streaming .open-btn { pointer-events:none; color:var(--icon-dim); opacity:.
 .frame-body li { margin:.18em 0; }
 .frame-body hr { border:0; border-top:1px solid var(--border); margin:.8em 0; }
 .frame-body img { max-width:100%; border-radius:6px; }
+.live-frame { margin:.5em 0; border:1px solid var(--border); border-radius:6px; background:var(--card); overflow:hidden; position:relative; }
+.live-frame .spinner-wrap { min-height:220px; display:flex; align-items:center; justify-content:center; }
+.live-frame .spinner { width:24px; height:24px; border-radius:50%; border:3px solid rgba(127,127,127,.28); border-top-color:var(--link); animation:spin .8s linear infinite; }
+.live-frame iframe.live-iframe { width:100%; border:0; min-height:220px; resize:vertical; overflow:auto; display:block; visibility:hidden; }
+.live-frame.ready .spinner-wrap { display:none; }
+.live-frame.ready iframe.live-iframe { visibility:visible; }
+@keyframes spin { to { transform:rotate(360deg); } }
 .frame-body > :first-child { margin-top:0; }
 .frame-body > :last-child { margin-bottom:0; }
 .user .head, .user details > summary.head { background:var(--user-head); }
@@ -155,6 +162,8 @@ document.addEventListener('click', e => {
         return body.ToString();
     }
 
+    public string RenderMessageFragment(ChatMessage message, bool darkTheme) => RenderMessage(message, darkTheme);
+
     public string RenderStandalone(ChatMessage message) => RenderFrameSource(message, includeDocumentShell: true, darkTheme: false);
 
     private string RenderMessage(ChatMessage message, bool darkTheme)
@@ -176,18 +185,19 @@ document.addEventListener('click', e => {
         var avatarHtml = WebUtility.HtmlEncode(avatar);
         var kindHtml   = WebUtility.HtmlEncode(kindLabel);
         var msgId      = message.Id;
+        var msgIdHtml  = WebUtility.HtmlEncode(msgId);
 
-        // Reasoning, Tool, Intent, System, Error are collapsed by default.
-        // Assistant messages use details but start open (collapsible by user).
-        bool collapsible = message.Kind is not ChatMessageKind.User;
-        bool openByDefault = message.Kind is ChatMessageKind.Assistant;
+        // All messages are collapsible.
+        // User and assistant messages start open; others are collapsed by default.
+        bool collapsible = true;
+        bool openByDefault = message.Kind is ChatMessageKind.User or ChatMessageKind.Assistant;
 
         if (collapsible)
         {
             var preview = WebUtility.HtmlEncode(GetPreview(message.Content));
             var openAttr = openByDefault ? " open" : "";
             return $$"""
-<article class="msg {{css}}">
+<article id="msg-{{msgIdHtml}}" class="msg {{css}}" data-mid="{{msgIdHtml}}">
   <details{{openAttr}}>
     <summary class="head">
       <span class="xicon">▶</span>
@@ -195,7 +205,7 @@ document.addEventListener('click', e => {
       <span class="kind-label">{{kindHtml}}</span>
       <span class="preview">{{preview}}</span>
       <span class="ts">{{time}}</span>{{(durHtml.Length > 0 ? $"\n      <span class=\"dur\">· {durHtml}</span>" : "")}}
-      <button class="open-btn" data-open-id="{{msgId}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
+      <button class="open-btn" data-open-id="{{msgIdHtml}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
     </summary>
     <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
   </details>
@@ -204,12 +214,12 @@ document.addEventListener('click', e => {
         }
 
         return $$"""
-<article class="msg {{css}}">
+<article id="msg-{{msgIdHtml}}" class="msg {{css}}" data-mid="{{msgIdHtml}}">
   <div class="head">
     <div class="avatar">{{avatarHtml}}</div>
     <span class="kind-label">{{kindHtml}}</span>
     <span class="ts">{{time}}</span>{{(durHtml.Length > 0 ? $"\n    <span class=\"dur\">· {durHtml}</span>" : "")}}
-    <button class="open-btn" data-open-id="{{msgId}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
+    <button class="open-btn" data-open-id="{{msgIdHtml}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
   </div>
   <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
 </article>
@@ -251,7 +261,10 @@ document.addEventListener('click', e => {
                     .Replace("\"", "&quot;");
                 return $"""
 <div style="margin:.5em 0">
-  <iframe srcdoc="{srcdoc}" style="width:100%;border:1px solid #d0d7de;border-radius:6px;min-height:220px;resize:vertical;overflow:auto" sandbox="allow-scripts allow-same-origin"></iframe>
+  <div class="live-frame">
+    <div class="spinner-wrap"><div class="spinner" aria-hidden="true"></div></div>
+    <iframe class="live-iframe" srcdoc="{srcdoc}" sandbox="allow-scripts allow-same-origin" onload="this.closest(&quot;.live-frame&quot;)?.classList.add(&quot;ready&quot;)"></iframe>
+  </div>
 </div>
 """;
             });
@@ -305,6 +318,13 @@ li { margin:.25em 0; }
 hr { border:0; border-top:1px solid {{border}}; margin:1em 0; }
 img { max-width:100%; border-radius:6px; }
 iframe { width:100% !important; min-height:calc(100vh - 3em) !important; border:1px solid {{border}}; border-radius:6px; display:block; resize:vertical; overflow:auto; }
+.live-frame { margin:.5em 0; border:1px solid {{border}}; border-radius:6px; background:{{background}}; overflow:hidden; position:relative; }
+.live-frame .spinner-wrap { min-height:220px; display:flex; align-items:center; justify-content:center; }
+.live-frame .spinner { width:24px; height:24px; border-radius:50%; border:3px solid rgba(127,127,127,.28); border-top-color:{{link}}; animation:spin .8s linear infinite; }
+.live-frame iframe.live-iframe { width:100%; border:0; min-height:220px; resize:vertical; overflow:auto; display:block; visibility:hidden; }
+.live-frame.ready .spinner-wrap { display:none; }
+.live-frame.ready iframe.live-iframe { visibility:visible; }
+@keyframes spin { to { transform:rotate(360deg); } }
 </style>
 """;
 
