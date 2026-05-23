@@ -3,26 +3,18 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         Title="Settings" Height="700" Width="900" WindowStartupLocation="CenterOwner"
-        Background="#F3F5F8">
+        Background="{DynamicResource PageBrush}">
     <Window.Resources>
-        <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
-        <SolidColorBrush x:Key="PanelBrush" Color="#FAFBFC" />
-        <SolidColorBrush x:Key="ControlBrush" Color="#F8FAFC" />
-        <SolidColorBrush x:Key="BorderBrushModern" Color="#D0D7DE" />
-        <SolidColorBrush x:Key="TextBrush" Color="#1F2328" />
-        <SolidColorBrush x:Key="MutedTextBrush" Color="#5D6673" />
-        <SolidColorBrush x:Key="AccentBrush" Color="#0A65CC" />
-
         <Style x:Key="CardBorder" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="16" />
         </Style>
 
         <Style x:Key="FieldLabel" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="0,0,0,5" />
@@ -31,28 +23,28 @@
         <Style TargetType="TextBox">
             <Setter Property="Height" Value="34" />
             <Setter Property="Padding" Value="9,0" />
-            <Setter Property="Background" Value="{StaticResource ControlBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
         <Style TargetType="PasswordBox">
             <Setter Property="Height" Value="34" />
             <Setter Property="Padding" Value="9,0" />
-            <Setter Property="Background" Value="{StaticResource ControlBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
         <Style x:Key="PrimaryButton" TargetType="Button">
             <Setter Property="Padding" Value="16,8" />
-            <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
             <Setter Property="Foreground" Value="#FFFFFF" />
-            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="FontSize" Value="13" />
@@ -84,9 +76,9 @@
 
         <Style x:Key="SecondaryButton" TargetType="Button">
             <Setter Property="Padding" Value="16,8" />
-            <Setter Property="Background" Value="{StaticResource ControlBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="FontSize" Value="13" />
@@ -103,7 +95,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chr" Property="Background" Value="{StaticResource SurfaceBrush}" />
+                                <Setter TargetName="Chr" Property="Background" Value="{DynamicResource SurfaceBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -127,7 +119,7 @@
             <Setter Property="Margin" Value="0,0,2,0" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
-            <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Template">
@@ -141,11 +133,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Chr" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Chr" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -154,27 +146,27 @@
         </Style>
 
         <Style TargetType="DataGrid">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="RowBackground" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="AlternatingRowBackground" Value="{StaticResource PanelBrush}" />
+            <Setter Property="RowBackground" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource PanelBrush}" />
             <Setter Property="GridLinesVisibility" Value="Horizontal" />
-            <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="RowHeight" Value="34" />
             <Setter Property="FontSize" Value="13" />
         </Style>
 
         <Style TargetType="ListBox">
-            <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushModern}" />
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Padding" Value="0,4" />
         </Style>
 
         <Style TargetType="CheckBox">
-            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
             <Setter Property="FontSize" Value="13" />
         </Style>
@@ -205,8 +197,8 @@
 
     <DockPanel>
         <!-- Header -->
-        <Border DockPanel.Dock="Top" Background="{StaticResource SurfaceBrush}"
-                BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="0,0,0,1" Padding="22,14">
+        <Border DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrushModern}" BorderThickness="0,0,0,1" Padding="22,14">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -218,16 +210,16 @@
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="16"
-                               Foreground="{StaticResource TextBrush}" />
+                               Foreground="{DynamicResource TextBrush}" />
                     <TextBlock Text="Configure GitHub credentials, user secrets, and permissions"
-                               Foreground="{StaticResource MutedTextBrush}" FontSize="12" />
+                               Foreground="{DynamicResource MutedTextBrush}" FontSize="12" />
                 </StackPanel>
             </Grid>
         </Border>
 
         <!-- Footer -->
-        <Border DockPanel.Dock="Bottom" Background="{StaticResource SurfaceBrush}"
-                BorderBrush="{StaticResource BorderBrushModern}" BorderThickness="0,1,0,0" Padding="22,13">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderBrushModern}" BorderThickness="0,1,0,0" Padding="22,13">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Cancel" Style="{StaticResource SecondaryButton}" Width="96"
                         Margin="0,0,10,0" Click="Cancel_Click" />
@@ -254,17 +246,17 @@
                     <Border Style="{StaticResource CardBorder}" Margin="0,14,0,0">
                         <StackPanel MaxWidth="520" HorizontalAlignment="Left">
                             <TextBlock Text="GitHub Authentication" FontWeight="SemiBold" FontSize="14"
-                                       Foreground="{StaticResource TextBrush}" Margin="0,0,0,4" />
+                                       Foreground="{DynamicResource TextBrush}" Margin="0,0,0,4" />
                             <TextBlock Text="Provide a personal access token to authenticate with GitHub Copilot."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                                       Foreground="{DynamicResource MutedTextBrush}" FontSize="12"
                                        TextWrapping="Wrap" Margin="0,0,0,16" />
-                            <Separator Background="{StaticResource BorderBrushModern}" Margin="0,0,0,16" />
+                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,16" />
                             <TextBlock Text="Personal Access Token" Style="{StaticResource FieldLabel}" />
                             <PasswordBox x:Name="GitHubTokenBox" />
                             <TextBlock Text="Generate a token at github.com/settings/tokens with the 'copilot' scope."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                       Foreground="{DynamicResource MutedTextBrush}" FontSize="11"
                                        Margin="0,6,0,16" TextWrapping="Wrap" />
-                            <Separator Background="{StaticResource BorderBrushModern}" Margin="0,0,0,16" />
+                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,16" />
                             <TextBlock Text="Working Directory" Style="{StaticResource FieldLabel}" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -276,8 +268,33 @@
                                         Content="Browse…" Click="BrowseWorkingDir_Click" />
                             </Grid>
                             <TextBlock Text="The folder the Copilot CLI runs from. MCP servers configured in .github/copilot/mcp.json relative to this folder will be available."
-                                       Foreground="{StaticResource MutedTextBrush}" FontSize="11"
+                                       Foreground="{DynamicResource MutedTextBrush}" FontSize="11"
                                        Margin="0,6,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                </TabItem>
+
+                <!-- Appearance tab -->
+                <TabItem>
+                    <TabItem.Header>
+                        <StackPanel Orientation="Horizontal">
+                            <ui:SymbolIcon Symbol="PaintBrush20" FontSize="14" Margin="0,0,6,0" />
+                            <TextBlock Text="Appearance" />
+                        </StackPanel>
+                    </TabItem.Header>
+                    <Border Style="{StaticResource CardBorder}" Margin="0,14,0,0">
+                        <StackPanel MaxWidth="520" HorizontalAlignment="Left">
+                            <TextBlock Text="Theme" FontWeight="SemiBold" FontSize="14"
+                                       Foreground="{DynamicResource TextBrush}" Margin="0,0,0,4" />
+                            <TextBlock Text="Controls when the light or dark colour scheme is applied."
+                                       Foreground="{DynamicResource MutedTextBrush}" FontSize="12"
+                                       TextWrapping="Wrap" Margin="0,0,0,16" />
+                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,16" />
+                            <TextBlock Text="Colour Scheme" Style="{StaticResource FieldLabel}" />
+                            <ComboBox x:Name="ThemeComboBox" MaxWidth="260" HorizontalAlignment="Left" />
+                            <TextBlock Text="Follow the sun uses light mode 7 am – 7 pm and dark mode outside those hours."
+                                       Foreground="{DynamicResource MutedTextBrush}" FontSize="11"
+                                       TextWrapping="Wrap" Margin="0,6,0,0" />
                         </StackPanel>
                     </Border>
                 </TabItem>
@@ -318,7 +335,7 @@
                                         Margin="0,0,12,0" ToolTip="Show / hide value"
                                         Click="RevealSecretButton_Click">
                                     <ui:SymbolIcon x:Name="RevealSecretIcon" Symbol="Eye20" FontSize="14"
-                                                   Foreground="{StaticResource MutedTextBrush}" />
+                                                   Foreground="{DynamicResource MutedTextBrush}" />
                                 </Button>
                                 <Button Content="Add" Grid.Row="1" Grid.Column="3" Style="{StaticResource SmallButton}"
                                         Width="60" Margin="0,0,6,0" Click="AddSecret_Click" />
@@ -350,7 +367,7 @@
                         <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,12">
                             <StackPanel>
                                 <TextBlock Text="Default Access" FontWeight="SemiBold" FontSize="12"
-                                           Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8" />
+                                           Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,8" />
                                 <CheckBox x:Name="AllowMcpCheckBox"
                                           Content="Allow MCP tools by default (no explicit approval needed)"
                                           Margin="0,0,0,6" />
@@ -363,7 +380,7 @@
                         <DockPanel>
                             <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
                                 <TextBlock Text="Saved Prompt Approvals" FontWeight="SemiBold"
-                                           FontSize="13" Foreground="{StaticResource TextBrush}" />
+                                           FontSize="13" Foreground="{DynamicResource TextBrush}" />
                                 <Button Content="Remove" HorizontalAlignment="Right"
                                         Style="{StaticResource SmallButton}" Width="72"
                                         Click="RemoveSavedRule_Click" />
@@ -390,7 +407,7 @@
                     </TabItem.Header>
                     <DockPanel Margin="0,14,0,0">
                         <TextBlock DockPanel.Dock="Top" Text="Folder Permissions" FontWeight="SemiBold"
-                                   FontSize="14" Foreground="{StaticResource TextBrush}" Margin="0,0,0,12" />
+                                   FontSize="14" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,12" />
                         <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,10">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -428,7 +445,7 @@
                     </TabItem.Header>
                     <DockPanel Margin="0,14,0,0">
                         <TextBlock DockPanel.Dock="Top" Text="Allowed Tools" FontWeight="SemiBold"
-                                   FontSize="14" Foreground="{StaticResource TextBrush}" Margin="0,0,0,12" />
+                                   FontSize="14" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,12" />
                         <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,10">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -456,7 +473,7 @@
                     </TabItem.Header>
                     <DockPanel Margin="0,14,0,0">
                         <TextBlock DockPanel.Dock="Top" Text="Allowed Hosts" FontWeight="SemiBold"
-                                   FontSize="14" Foreground="{StaticResource TextBrush}" Margin="0,0,0,12" />
+                                   FontSize="14" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,12" />
                         <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,10">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -484,10 +501,10 @@
                     </TabItem.Header>
                     <DockPanel Margin="0,14,0,0">
                         <TextBlock DockPanel.Dock="Top" Text="Default System Prompt" FontWeight="SemiBold"
-                                   FontSize="14" Foreground="{StaticResource TextBrush}" Margin="0,0,0,4" />
+                                   FontSize="14" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,4" />
                         <TextBlock DockPanel.Dock="Top"
                                    Text="Applied automatically at the start of every new chat session. Leave blank to use no system prompt."
-                                   Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                                   Foreground="{DynamicResource MutedTextBrush}" FontSize="12"
                                    TextWrapping="Wrap" Margin="0,0,0,12" />
                         <Border Style="{StaticResource CardBorder}" Padding="0">
                             <TextBox x:Name="SystemPromptBox"
@@ -497,8 +514,8 @@
                                      BorderThickness="0"
                                      VerticalContentAlignment="Top"
                                      FontSize="13" FontFamily="Consolas, Courier New, monospace"
-                                     Foreground="{StaticResource TextBrush}"
-                                     Background="{StaticResource SurfaceBrush}"
+                                     Foreground="{DynamicResource TextBrush}"
+                                     Background="{DynamicResource SurfaceBrush}"
                                      VerticalAlignment="Stretch" />
                         </Border>
                     </DockPanel>
@@ -515,8 +532,8 @@
                     <DockPanel Margin="0,14,0,0">
                         <!-- Note banner -->
                         <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,14">
-                            <TextBlock Foreground="{StaticResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap">
-                                <Run FontWeight="SemiBold" Foreground="{StaticResource TextBrush}">Default locations loaded automatically: </Run>
+                            <TextBlock Foreground="{DynamicResource MutedTextBrush}" FontSize="12" TextWrapping="Wrap">
+                                <Run FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}">Default locations loaded automatically: </Run>
                                 <Run>~/.copilot/agents, &lt;working-dir&gt;/.github/agents, ~/.copilot/skills, &lt;working-dir&gt;/.github/skills</Run>
                                 <LineBreak />
                                 <Run>Add extra folders below. Changes take effect for new sessions.</Run>
@@ -533,7 +550,7 @@
                             <!-- Agents column -->
                             <DockPanel Grid.Column="0">
                                 <TextBlock DockPanel.Dock="Top" Text="Extra Agent Folders" FontWeight="SemiBold"
-                                           FontSize="13" Foreground="{StaticResource TextBrush}" Margin="0,0,0,8" />
+                                           FontSize="13" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,8" />
                                 <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,8">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -561,7 +578,7 @@
                             <!-- Skills column -->
                             <DockPanel Grid.Column="2">
                                 <TextBlock DockPanel.Dock="Top" Text="Extra Skill Folders" FontWeight="SemiBold"
-                                           FontSize="13" Foreground="{StaticResource TextBrush}" Margin="0,0,0,8" />
+                                           FontSize="13" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,8" />
                                 <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,8">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
@@ -599,10 +616,10 @@
                     </TabItem.Header>
                     <DockPanel Margin="0,14,0,0">
                         <TextBlock DockPanel.Dock="Top" Text="Debug Logging" FontWeight="SemiBold"
-                                   FontSize="14" Foreground="{StaticResource TextBrush}" Margin="0,0,0,4" />
+                                   FontSize="14" Foreground="{DynamicResource TextBrush}" Margin="0,0,0,4" />
                         <TextBlock DockPanel.Dock="Top"
                                    Text="When enabled, all Copilot messages (user input, system messages, intent, reasoning, responses, tool calls, permission requests, and ask-user prompts) are written to a daily log file."
-                                   Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                                   Foreground="{DynamicResource MutedTextBrush}" FontSize="12"
                                    TextWrapping="Wrap" Margin="0,0,0,14" />
 
                         <Border DockPanel.Dock="Top" Style="{StaticResource CardBorder}" Margin="0,0,0,12">
@@ -614,7 +631,7 @@
                             <DockPanel>
                                 <TextBlock DockPanel.Dock="Top" Text="Log file location"
                                            FontWeight="SemiBold" FontSize="12"
-                                           Foreground="{StaticResource MutedTextBrush}" Margin="0,0,0,8" />
+                                           Foreground="{DynamicResource MutedTextBrush}" Margin="0,0,0,8" />
                                 <Button DockPanel.Dock="Right"
                                         x:Name="OpenLogFolderButton"
                                         Content="Open folder"
@@ -622,7 +639,7 @@
                                         Width="110" Margin="10,0,0,0"
                                         Click="OpenLogFolder_Click" />
                                 <TextBlock x:Name="LogPathTextBlock"
-                                           Foreground="{StaticResource TextBrush}"
+                                           Foreground="{DynamicResource TextBrush}"
                                            FontSize="12" FontFamily="Consolas, Courier New, monospace"
                                            TextWrapping="Wrap"
                                            VerticalAlignment="Center" />

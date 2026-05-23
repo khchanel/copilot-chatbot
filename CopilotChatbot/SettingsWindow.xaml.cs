@@ -34,6 +34,8 @@ public partial class SettingsWindow : Window
         AgentDirsList.ItemsSource = Settings.AgentDirectories;
         SkillDirsList.ItemsSource = Settings.SkillDirectories;
         LogPathTextBlock.Text = _debugLogger.CurrentLogPath;
+        ThemeComboBox.ItemsSource = new[] { "Light", "Dark", "System", "Follow the sun" };
+        ThemeComboBox.SelectedIndex = (int)Settings.Theme;
     }
 
     private void AddSecret_Click(object sender, RoutedEventArgs e)
@@ -135,6 +137,7 @@ public partial class SettingsWindow : Window
         Settings.Permissions.AllowCustomToolsByDefault = AllowCustomToolsCheckBox.IsChecked == true;
         Settings.DefaultSystemPrompt = string.IsNullOrWhiteSpace(SystemPromptBox.Text) ? null : SystemPromptBox.Text;
         Settings.EnableDebugLogging = EnableDebugLoggingCheckBox.IsChecked == true;
+        Settings.Theme = (AppThemeMode)(ThemeComboBox.SelectedIndex >= 0 ? ThemeComboBox.SelectedIndex : 2);
         DialogResult = true;
     }
 

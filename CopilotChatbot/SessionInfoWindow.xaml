@@ -7,14 +7,6 @@
         WindowStartupLocation="CenterOwner" ResizeMode="CanResizeWithGrip"
         Background="{DynamicResource PageBrush}">
     <Window.Resources>
-        <SolidColorBrush x:Key="SurfaceBrush"      Color="#FFFFFF"/>
-        <SolidColorBrush x:Key="PanelBrush"        Color="#FAFBFC"/>
-        <SolidColorBrush x:Key="BorderBrushModern" Color="#D0D7DE"/>
-        <SolidColorBrush x:Key="TextBrush"         Color="#1F2328"/>
-        <SolidColorBrush x:Key="MutedTextBrush"    Color="#5D6673"/>
-        <SolidColorBrush x:Key="AccentBrush"       Color="#0A65CC"/>
-        <SolidColorBrush x:Key="PageBrush"         Color="#F3F5F8"/>
-
         <!-- Status dot colour — computed in code-behind via Tag -->
         <local:StatusColorConverter x:Key="StatusColor"/>
         <local:NullToVisibilityConverter x:Key="NullToVisibility"/>

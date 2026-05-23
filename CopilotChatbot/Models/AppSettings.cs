@@ -2,9 +2,12 @@ using System.Collections.ObjectModel;
 
 namespace CopilotChatbot.Models;
 
+public enum AppThemeMode { Light, Dark, System, FollowTheSun }
+
 public sealed class AppSettings
 {
     public string? GitHubToken { get; set; }
+    public AppThemeMode Theme { get; set; } = AppThemeMode.System;
     public ObservableCollection<UserSecretSetting> UserSecrets { get; set; } = [];
     public string? SelectedModelId { get; set; }
     public string? SelectedReasoningEffort { get; set; }

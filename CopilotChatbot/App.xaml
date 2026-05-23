@@ -9,6 +9,157 @@
                 <ResourceDictionary Source="pack://application:,,,/Wpf.Ui;component/Resources/Theme/Light.xaml" />
                 <ResourceDictionary Source="pack://application:,,,/Wpf.Ui;component/Resources/Wpf.Ui.xaml" />
             </ResourceDictionary.MergedDictionaries>
+            <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="PanelBrush" Color="#FAFBFC" />
+            <SolidColorBrush x:Key="PageBrush" Color="#F3F5F8" />
+            <SolidColorBrush x:Key="ControlBrush" Color="#F8FAFC" />
+            <SolidColorBrush x:Key="ControlHoverBrush" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="BorderBrushModern" Color="#D0D7DE" />
+            <SolidColorBrush x:Key="TextBrush" Color="#1F2328" />
+            <SolidColorBrush x:Key="MutedTextBrush" Color="#5D6673" />
+            <SolidColorBrush x:Key="AccentBrush" Color="#0A65CC" />
+            <SolidColorBrush x:Key="AccentSoftBrush" Color="#E7F1FF" />
+            <SolidColorBrush x:Key="DisabledControlBrush" Color="#E5E7EB" />
+            <SolidColorBrush x:Key="DisabledBorderBrush" Color="#D1D5DB" />
+            <SolidColorBrush x:Key="DisabledTextBrush" Color="#8A94A3" />
+
+            <!-- ComboBox style: ToggleButton IS the entire visual face.
+                 Style="{x:Null}" on the ToggleButton clears ALL implicit style lookup including
+                 Application.Resources (Wpf.Ui). OverridesDefaultStyle=True clears WPF theme styles.
+                 Together they ensure nothing from Wpf.Ui can disable hit-testing or modify behaviour.
+                 Visual triggers live inside the nested ToggleButton template where they can directly
+                 target Chrome and Arrow via IsChecked (mirrors IsDropDownOpen via TwoWay binding). -->
+            <Style TargetType="ComboBox">
+                <Setter Property="MinHeight" Value="28" />
+                <Setter Property="Padding" Value="8,3" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushModern}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ComboBox">
+                            <Grid>
+                                <ToggleButton x:Name="ToggleButton"
+                                              Style="{x:Null}"
+                                              OverridesDefaultStyle="True"
+                                              Focusable="False"
+                                              IsTabStop="False"
+                                              ClickMode="Press"
+                                              Cursor="Hand"
+                                              IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ToggleButton.Template>
+                                        <ControlTemplate TargetType="ToggleButton">
+                                            <Border x:Name="Chrome"
+                                                    Background="{Binding Background, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                    BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                    BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                    CornerRadius="7">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="22" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <ContentPresenter x:Name="ContentSite"
+                                                                      IsHitTestVisible="False"
+                                                                      Content="{Binding SelectionBoxItem, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                                      ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                                      ContentTemplateSelector="{Binding ItemTemplateSelector, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                                      Margin="{Binding Padding, RelativeSource={RelativeSource FindAncestor, AncestorType={x:Type ComboBox}}}"
+                                                                      VerticalAlignment="Center"
+                                                                      HorizontalAlignment="Left">
+                                                        <ContentPresenter.Resources>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                                                <Setter Property="VerticalAlignment" Value="Center" />
+                                                            </Style>
+                                                        </ContentPresenter.Resources>
+                                                    </ContentPresenter>
+                                                    <Path x:Name="Arrow"
+                                                          Grid.Column="1"
+                                                          IsHitTestVisible="False"
+                                                          HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          Data="M 0 0 L 4 4 L 8 0"
+                                                          Stroke="{DynamicResource MutedTextBrush}"
+                                                          StrokeThickness="1.5" />
+                                                </Grid>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+                                                </Trigger>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                                    <Setter TargetName="Arrow" Property="Data" Value="M 0 4 L 4 0 L 8 4" />
+                                                </Trigger>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter TargetName="Chrome" Property="Background" Value="{DynamicResource DisabledControlBrush}" />
+                                                    <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource DisabledBorderBrush}" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </ToggleButton.Template>
+                                </ToggleButton>
+                                <Popup x:Name="PART_Popup"
+                                       IsOpen="{TemplateBinding IsDropDownOpen}"
+                                       Placement="Bottom"
+                                       PlacementTarget="{Binding ElementName=ToggleButton}"
+                                       AllowsTransparency="True"
+                                       Focusable="False">
+                                    <Border Background="{DynamicResource SurfaceBrush}"
+                                            BorderBrush="{DynamicResource BorderBrushModern}"
+                                            BorderThickness="1"
+                                            CornerRadius="7"
+                                            Margin="0,2,0,0"
+                                            Padding="4,3"
+                                            MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                                        <ScrollViewer MaxHeight="200"
+                                                      VerticalScrollBarVisibility="Auto">
+                                            <ItemsPresenter />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="ItemContainerStyle">
+                    <Setter.Value>
+                        <Style TargetType="ComboBoxItem">
+                            <Setter Property="Padding" Value="8,4" />
+                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                            <Setter Property="Background" Value="Transparent" />
+                            <Setter Property="HorizontalContentAlignment" Value="Left" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ComboBoxItem">
+                                        <Border x:Name="ItemChrome"
+                                                Background="{TemplateBinding Background}"
+                                                CornerRadius="5"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter>
+                                                <ContentPresenter.Resources>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                                                    </Style>
+                                                </ContentPresenter.Resources>
+                                            </ContentPresenter>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsHighlighted" Value="True">
+                                                <Setter TargetName="ItemChrome" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </Setter.Value>
+                </Setter>
+            </Style>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

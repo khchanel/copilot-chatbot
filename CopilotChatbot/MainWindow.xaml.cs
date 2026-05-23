@@ -13,6 +13,7 @@ using CopilotChatbot.Services;
 using Microsoft.Web.WebView2.Core;
 using SymbolRegular = Wpf.Ui.Controls.SymbolRegular;
 
+
 namespace CopilotChatbot;
 
 public partial class MainWindow : Window
@@ -25,6 +26,7 @@ public partial class MainWindow : Window
     private AppSettings _settings;
     private bool _isDarkTheme;
     private bool _showDetailMessages;
+    private System.Windows.Threading.DispatcherTimer? _themeTimer;
 
     public MainWindow()
     {
@@ -54,6 +56,7 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        ApplyThemeFromMode();
         _ = AddChatAsync();
         await RefreshModelsAsync(showErrorDialog: false, allowFallback: true);
     }
@@ -82,7 +85,16 @@ public partial class MainWindow : Window
 
     private void ThemeButton_Click(object sender, RoutedEventArgs e)
     {
-        ApplyTheme(!_isDarkTheme);
+        _settings.Theme = _settings.Theme switch
+        {
+            AppThemeMode.Light        => AppThemeMode.Dark,
+            AppThemeMode.Dark         => AppThemeMode.System,
+            AppThemeMode.System       => AppThemeMode.FollowTheSun,
+            AppThemeMode.FollowTheSun => AppThemeMode.Light,
+            _                         => AppThemeMode.Light,
+        };
+        _settingsStore.Save(_settings);
+        ApplyThemeFromMode();
     }
 
     private async void SessionInfoButton_Click(object sender, RoutedEventArgs e)
@@ -100,6 +112,7 @@ public partial class MainWindow : Window
             _settings = window.Settings;
             _settingsStore.Save(_settings);
             _debugLogger.IsEnabled = _settings.EnableDebugLogging;
+            ApplyThemeFromMode();
         }
     }
 
@@ -455,15 +468,17 @@ public partial class MainWindow : Window
 
     private async Task CloseTabAsync(TabItem tab)
     {
-        if (tab.Tag is ChatSessionView chat)
-        {
-            await _copilot.CloseSessionAsync(chat);
-        }
-
+        // Remove from UI immediately — avoids showing an empty tab while the session closes
         ChatTabs.Items.Remove(tab);
         if (ChatTabs.Items.Count == 0)
         {
             await AddChatAsync();
+        }
+
+        // Close the backing session after the UI is already updated
+        if (tab.Tag is ChatSessionView chat)
+        {
+            try { await _copilot.CloseSessionAsync(chat); } catch { /* ignore on close */ }
         }
     }
 
@@ -732,6 +747,78 @@ public partial class MainWindow : Window
         RenderCurrentChat();
     }
 
+    private void ApplyThemeFromMode()
+    {
+        bool dark = _settings.Theme switch
+        {
+            AppThemeMode.Light        => false,
+            AppThemeMode.Dark         => true,
+            AppThemeMode.System       => IsSystemDark(),
+            AppThemeMode.FollowTheSun => IsFollowTheSunDark(),
+            _                      => false,
+        };
+
+        if (_settings.Theme == AppThemeMode.FollowTheSun)
+            StartFollowTheSunTimer();
+        else
+            StopThemeTimer();
+
+        ApplyTheme(dark);
+        UpdateThemeIcon();
+    }
+
+    private void UpdateThemeIcon()
+    {
+        var (symbol, tooltip) = _settings.Theme switch
+        {
+            AppThemeMode.Light        => (SymbolRegular.WeatherSunny20,  "Theme: Light — click for Dark"),
+            AppThemeMode.Dark         => (SymbolRegular.WeatherMoon20,   "Theme: Dark — click for System"),
+            AppThemeMode.System       => (SymbolRegular.Desktop20,       "Theme: System — click for Follow the Sun"),
+            AppThemeMode.FollowTheSun => (SymbolRegular.Clock20,         "Theme: Follow the Sun — click for Light"),
+            _                         => (SymbolRegular.WeatherSunny20,  "Theme: Light"),
+        };
+        ThemeIcon.Symbol = symbol;
+        ThemeButton.ToolTip = tooltip;
+    }
+
+    private static bool IsSystemDark()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+            return key?.GetValue("AppsUseLightTheme") is int v && v == 0;
+        }
+        catch { return false; }
+    }
+
+    private static bool IsFollowTheSunDark()
+    {
+        var hour = DateTime.Now.Hour;
+        return hour < 7 || hour >= 19;
+    }
+
+    private void StartFollowTheSunTimer()
+    {
+        if (_themeTimer is not null) return;
+        _themeTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromMinutes(5)
+        };
+        _themeTimer.Tick += (_, _) =>
+        {
+            if (_settings.Theme == AppThemeMode.FollowTheSun)
+                ApplyTheme(IsFollowTheSunDark());
+        };
+        _themeTimer.Start();
+    }
+
+    private void StopThemeTimer()
+    {
+        _themeTimer?.Stop();
+        _themeTimer = null;
+    }
+
     private void ApplyTheme(bool dark)
     {
         _isDarkTheme = dark;
@@ -749,7 +836,6 @@ public partial class MainWindow : Window
         SetBrush("DisabledControlBrush", dark ? "#263244" : "#E5E7EB");
         SetBrush("DisabledBorderBrush", dark ? "#39465A" : "#D1D5DB");
         SetBrush("DisabledTextBrush", dark ? "#7F8A99" : "#8A94A3");
-        ThemeIcon.Symbol = dark ? SymbolRegular.WeatherSunny20 : SymbolRegular.WeatherMoon20;
         // Force full re-render of all chats so the new theme CSS is applied
         var bgColor = dark
             ? System.Drawing.Color.FromArgb(255, 17, 24, 39)
@@ -780,6 +866,8 @@ public partial class MainWindow : Window
 
     private void SetBrush(string key, string color)
     {
-        Resources[key] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
+        Resources[key] = brush;
+        Application.Current.Resources[key] = brush;
     }
 }
