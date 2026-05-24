@@ -150,6 +150,59 @@ public sealed class CopilotChatService : IAsyncDisposable
         }
     }
 
+    public async Task ResumeSessionAsync(ChatSessionView chat, AppSettings settings, ModelChoice? model, string? reasoningEffort)
+    {
+        if (string.IsNullOrWhiteSpace(chat.CopilotSessionId))
+        {
+            throw new InvalidOperationException("The saved chat does not have a Copilot session id.");
+        }
+
+        if (_sessions.TryGetValue(chat, out _))
+        {
+            return;
+        }
+
+        var client = await EnsureClientAsync(settings);
+        await client.GetSessionMetadataAsync(chat.CopilotSessionId);
+        var token = await ResolveGitHubTokenAsync(settings.GitHubToken);
+        var customAgents = LoadAgentsFromDirectories(settings);
+        if (customAgents?.Count > 0)
+        {
+            var agentInfos = customAgents
+                .Select(a => new AgentInfo(a.DisplayName ?? a.Name, "loaded", "file"))
+                .ToList();
+            _capabilitiesSnapshot = new SessionCapabilitiesSnapshot(_capabilitiesSnapshot.McpServers, agentInfos, _capabilitiesSnapshot.Skills);
+        }
+
+        var session = await client.ResumeSessionAsync(chat.CopilotSessionId, new ResumeSessionConfig
+        {
+            Model = model?.Id ?? settings.SelectedModelId,
+            ReasoningEffort = string.IsNullOrWhiteSpace(reasoningEffort) ? null : reasoningEffort,
+            Streaming = true,
+            GitHubToken = token,
+            SystemMessage = string.IsNullOrWhiteSpace(chat.SystemPrompt) ? null : new SystemMessageConfig { Content = chat.SystemPrompt },
+            McpServers = _mcpServerConfigs.Count > 0 ? _mcpServerConfigs : null,
+            SkillDirectories = GetEffectiveSkillDirectories(settings),
+            CustomAgents = customAgents,
+            OnPermissionRequest = async (request, _) => await EvaluatePermissionAsync(request, settings),
+            OnUserInputRequest = async (request, _) =>
+            {
+                try { return await EvaluateUserInputAsync(chat, request); }
+                catch (Exception ex)
+                {
+                    _logger.Log("ASK-USER-FATAL", ex.ToString());
+                    return new UserInputResponse { Answer = "", WasFreeform = true };
+                }
+            }
+        });
+
+        chat.CopilotSessionId = session.SessionId;
+        chat.IsSessionMissing = false;
+        _logger.Log("SESSION", $"Resumed session {session.SessionId} | model={model?.Id ?? settings.SelectedModelId} | reasoning={reasoningEffort ?? "default"}");
+        session.On(evt => HandleEvent(chat, evt));
+        _sessions[chat] = session;
+    }
+
     private async Task<CopilotClient> EnsureClientAsync(AppSettings settings, CancellationToken cancellationToken = default)
     {
         if (_client is not null)
@@ -1045,18 +1098,7 @@ public sealed class CopilotChatService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (var session in _sessions.Values)
-        {
-            try
-            {
-                await session.DisposeAsync();
-            }
-            catch
-            {
-                // Shutdown must not surface SDK transport failures to WPF.
-            }
-        }
-
+        _sessions.Clear();
         if (_client is not null)
         {
             await DisposeClientQuietlyAsync(_client);

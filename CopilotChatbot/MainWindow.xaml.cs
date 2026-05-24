@@ -19,6 +19,7 @@ namespace CopilotChatbot;
 public partial class MainWindow : Window
 {
     private readonly SettingsStore _settingsStore = new();
+    private readonly ChatSessionStore _chatSessionStore = new();
     private readonly HtmlRenderer _htmlRenderer = new();
     private readonly DebugLogger _debugLogger = new();
     private readonly CopilotChatService _copilot;
@@ -27,6 +28,7 @@ public partial class MainWindow : Window
     private AppSettings _settings;
     private bool _isDarkTheme;
     private bool _showDetailMessages;
+    private bool _isRestoringChats;
     private System.Windows.Threading.DispatcherTimer? _themeTimer;
 
     public MainWindow()
@@ -58,8 +60,8 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyThemeFromMode();
-        _ = AddChatAsync();
         await RefreshModelsAsync(showErrorDialog: false, allowFallback: true);
+        await RestoreOpenChatsAsync();
     }
 
     private async void MainWindow_Closed(object? sender, EventArgs e)
@@ -89,6 +91,7 @@ public partial class MainWindow : Window
             chat.Messages.Clear();
             chat.IsPageInitialized = false;
             RenderCurrentChat();
+            SaveOpenChats();
         }
     }
 
@@ -147,6 +150,7 @@ public partial class MainWindow : Window
             RenderCurrentChat();
             UpdateInputState();
             UpdateStatusBar(CurrentChat);
+            SaveOpenChats();
         }
     }
 
@@ -176,7 +180,7 @@ public partial class MainWindow : Window
     {
         var chat = CurrentChat;
         var prompt = PromptTextBox.Text;
-        if (chat is null || string.IsNullOrWhiteSpace(prompt))
+        if (chat is null || chat.IsSessionMissing || string.IsNullOrWhiteSpace(prompt))
         {
             return;
         }
@@ -191,6 +195,7 @@ public partial class MainWindow : Window
         {
             var model = ModelComboBox.SelectedItem as ModelChoice;
             await _copilot.SendAsync(chat, prompt, _settings, model, ReasoningComboBox.SelectedItem?.ToString());
+            SaveOpenChats();
         }
         catch (Exception ex)
         {
@@ -198,6 +203,7 @@ public partial class MainWindow : Window
             chat.Messages.Add(new ChatMessage { Kind = ChatMessageKind.Error, Content = ex.Message });
             RenderChat(chat);
             UpdateInputState();
+            SaveOpenChats();
         }
     }
 
@@ -359,7 +365,10 @@ public partial class MainWindow : Window
                 // Re-render once after the response completes so that CompletedAt
                 // (stamped in SetPending just before this event fires) appears in the header.
                 if (!isPending)
+                {
                     RenderChat(chat);
+                    SaveOpenChats();
+                }
             }
         });
     }
@@ -395,18 +404,50 @@ public partial class MainWindow : Window
         new() { Id = "claude-sonnet-4.5", Name = "Claude Sonnet 4.5", IsFallback = true }
     ];
 
-    private async Task AddChatAsync()
+    private async Task AddChatAsync(PersistedChatSession? persisted = null, bool select = true)
     {
-        var chat = new ChatSessionView($"Chat {ChatTabs.Items.Count + 1}")
+        var chat = CreateChatTabItem(persisted, select);
+        await InitializeChatBrowserAsync(chat);
+    }
+
+    /// <summary>
+    /// Synchronously creates the <see cref="ChatSessionView"/> and its <see cref="TabItem"/> and
+    /// adds them to the tab strip.  Does <em>not</em> initialize the embedded browser — call
+    /// <see cref="InitializeChatBrowserAsync"/> afterwards.
+    /// </summary>
+    private ChatSessionView CreateChatTabItem(PersistedChatSession? persisted, bool select)
+    {
+        var chat = new ChatSessionView(string.IsNullOrWhiteSpace(persisted?.Title) ? $"Chat {ChatTabs.Items.Count + 1}" : persisted!.Title)
         {
-            SystemPrompt = string.IsNullOrWhiteSpace(_settings.DefaultSystemPrompt) ? null : _settings.DefaultSystemPrompt
+            CopilotSessionId = persisted?.CopilotSessionId,
+            IsSessionMissing = persisted?.IsSessionMissing == true,
+            SystemPrompt = persisted is null
+                ? (string.IsNullOrWhiteSpace(_settings.DefaultSystemPrompt) ? null : _settings.DefaultSystemPrompt)
+                : persisted.SystemPrompt
         };
+        if (persisted is not null)
+        {
+            foreach (var message in persisted.Messages)
+            {
+                chat.Messages.Add(new ChatMessage
+                {
+                    Id = string.IsNullOrWhiteSpace(message.Id) ? Guid.NewGuid().ToString("N") : message.Id,
+                    Kind = message.Kind,
+                    Content = message.Content,
+                    CreatedAt = message.CreatedAt == default ? DateTimeOffset.Now : message.CreatedAt,
+                    CompletedAt = message.CompletedAt
+                });
+            }
+        }
         chat.Messages.CollectionChanged += ChatMessages_CollectionChanged;
 
         var tab = new TabItem { Content = chat.Browser, Tag = chat };
         SetTabHeader(tab, chat.Title);
         ChatTabs.Items.Add(tab);
-        ChatTabs.SelectedItem = tab;
+        if (select)
+        {
+            ChatTabs.SelectedItem = tab;
+        }
         ChatTabs.UpdateLayout();
         UpdateInputState();
 
@@ -414,11 +455,21 @@ public partial class MainWindow : Window
             ? System.Drawing.Color.FromArgb(255, 17, 24, 39)
             : System.Drawing.Color.White;
 
+        return chat;
+    }
+
+    /// <summary>
+    /// Initializes the embedded WebView2 browser for <paramref name="chat"/> and performs
+    /// the first render.  Safe to call after <see cref="CreateChatTabItem"/>.
+    /// </summary>
+    private async Task InitializeChatBrowserAsync(ChatSessionView chat)
+    {
         try
         {
             await chat.Browser.EnsureCoreWebView2Async();
             chat.Browser.CoreWebView2.WebMessageReceived += Browser_WebMessageReceived;
             RenderChat(chat);
+            SaveOpenChats();
         }
         catch (Exception ex)
         {
@@ -427,8 +478,165 @@ public partial class MainWindow : Window
                 Kind = ChatMessageKind.Error,
                 Content = "Embedded browser initialization failed.\n\n" + ex.Message
             });
+            SaveOpenChats();
         }
     }
+
+    private async Task RestoreOpenChatsAsync()
+    {
+        var hadPersistedState = _chatSessionStore.Exists;
+        var state = _chatSessionStore.Load();
+        if (!hadPersistedState)
+        {
+            await AddChatAsync();
+            return;
+        }
+
+        var tabs = new List<TabItem>();
+        _isRestoringChats = true;
+        try
+        {
+            // Phase 1: Create all tab shells synchronously so the tab strip is fully
+            // populated before any slow browser-initialization awaits begin.
+            foreach (var saved in state.Sessions)
+            {
+                CreateChatTabItem(saved, select: false);
+            }
+            tabs = ChatTabs.Items.OfType<TabItem>().ToList();
+
+            // Phase 2: Immediately select the first non-missing tab so the user sees
+            // the correct tab highlighted before browsers begin initializing.
+            ActivateFirstRestoredChat(tabs);
+
+            // Phase 3: Initialize the embedded browser for each tab.  The currently
+            // selected tab goes first so its content appears as soon as possible;
+            // the remaining tabs are initialized sequentially afterwards.
+            var selectedChat = CurrentChat;
+            foreach (var tab in tabs.OrderBy(t => ReferenceEquals(t.Tag as ChatSessionView, selectedChat) ? 0 : 1))
+            {
+                if (tab.Tag is ChatSessionView chat)
+                    await InitializeChatBrowserAsync(chat);
+            }
+
+            // Phase 4: Resume Copilot sessions now that all browsers are ready.
+            foreach (var tab in tabs)
+            {
+                if (tab.Tag is not ChatSessionView chat || chat.IsSessionMissing)
+                {
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(chat.CopilotSessionId))
+                {
+                    MarkSessionMissing(chat, "This saved chat does not have a Copilot session id.");
+                    continue;
+                }
+
+                try
+                {
+                    var model = ModelComboBox.SelectedItem as ModelChoice;
+                    await _copilot.ResumeSessionAsync(chat, _settings, model, ReasoningComboBox.SelectedItem?.ToString());
+                }
+                catch (Exception ex)
+                {
+                    MarkSessionMissing(chat, $"Copilot session '{chat.CopilotSessionId}' could not be found or resumed.\n\n{ex.Message}");
+                }
+            }
+        }
+        finally
+        {
+            _isRestoringChats = false;
+        }
+
+        // Final activation: only switch away if the selected tab was marked missing during resume.
+        if (CurrentChat?.IsSessionMissing == true)
+            ActivateFirstRestoredChat(tabs);
+        else
+        {
+            UpdateInputState();
+            UpdateStatusBar(CurrentChat);
+        }
+        SaveOpenChats();
+    }
+
+    private void ActivateFirstRestoredChat(IReadOnlyList<TabItem> tabs)
+    {
+        var startupTab = tabs.FirstOrDefault(tab => (tab.Tag as ChatSessionView)?.IsSessionMissing == false)
+            ?? tabs.FirstOrDefault();
+        if (startupTab is null)
+        {
+            UpdateInputState();
+            UpdateStatusBar(null);
+            return;
+        }
+
+        var startupIndex = ChatTabs.Items.IndexOf(startupTab);
+        if (startupIndex >= 0)
+        {
+            // Setting SelectedIndex fires ChatTabs_SelectionChanged which renders the tab and
+            // updates status. If the index is unchanged (tab was already auto-selected by WPF
+            // when it was first added), SelectionChanged does not fire, so call the updates
+            // explicitly below to ensure the correct enabled/disabled input state is applied
+            // after all sessions have finished resuming or been marked missing.
+            ChatTabs.SelectedIndex = startupIndex;
+            startupTab.BringIntoView();
+            ChatTabs.UpdateLayout();
+        }
+
+        UpdateInputState();
+        UpdateStatusBar(CurrentChat);
+    }
+
+    private void MarkSessionMissing(ChatSessionView chat, string reason)
+    {
+        chat.IsSessionMissing = true;
+        chat.IsPending = false;
+        chat.LastStatus = null;
+        chat.Messages.Add(new ChatMessage
+        {
+            Kind = ChatMessageKind.System,
+            Content = reason + "\n\nThis restored chat is read-only. Close it to remove it from startup, or start a new chat."
+        });
+        RenderChat(chat);
+        if (ReferenceEquals(chat, CurrentChat))
+            UpdateInputState();
+    }
+
+    private void SaveOpenChats()
+    {
+        if (_isRestoringChats)
+        {
+            return;
+        }
+
+        var sessions = ChatTabs.Items.OfType<TabItem>()
+            .Select(tab => tab.Tag as ChatSessionView)
+            .Where(chat => chat is not null)
+            .Select(chat => ToPersistedSession(chat!))
+            .ToList();
+        _chatSessionStore.Save(new PersistedChatState
+        {
+            Sessions = sessions,
+            SelectedSessionId = CurrentChat?.CopilotSessionId
+        });
+    }
+
+    private static PersistedChatSession ToPersistedSession(ChatSessionView chat) =>
+        new()
+        {
+            Title = chat.Title,
+            CopilotSessionId = chat.CopilotSessionId,
+            SystemPrompt = chat.SystemPrompt,
+            IsSessionMissing = chat.IsSessionMissing,
+            Messages = chat.Messages.Select(message => new PersistedChatMessage
+            {
+                Id = message.Id,
+                Kind = message.Kind,
+                Content = message.Content,
+                CreatedAt = message.CreatedAt,
+                CompletedAt = message.CompletedAt
+            }).ToList()
+        };
 
     private void SetTabHeader(TabItem tab, string title)
     {
@@ -485,10 +693,6 @@ public partial class MainWindow : Window
     {
         // Remove from UI immediately — avoids showing an empty tab while the session closes
         ChatTabs.Items.Remove(tab);
-        if (ChatTabs.Items.Count == 0)
-        {
-            await AddChatAsync();
-        }
 
         // Close the backing session after the UI is already updated
         if (tab.Tag is ChatSessionView chat)
@@ -496,6 +700,9 @@ public partial class MainWindow : Window
             _renderRevisions.Remove(chat);
             try { await _copilot.CloseSessionAsync(chat); } catch { /* ignore on close */ }
         }
+        SaveOpenChats();
+        UpdateInputState();
+        UpdateStatusBar(CurrentChat);
     }
 
     private void Tab_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -519,6 +726,7 @@ public partial class MainWindow : Window
         {
             chat.Title = dialog.TabTitle;
             SetTabHeader(tab, chat.Title);
+            SaveOpenChats();
         }
     }
 
@@ -527,6 +735,7 @@ public partial class MainWindow : Window
         if (ChatTabs.Items.OfType<TabItem>().FirstOrDefault(t => ReferenceEquals((t.Tag as ChatSessionView)?.Messages, sender))?.Tag is ChatSessionView chat)
         {
             RenderChat(chat);
+            SaveOpenChats();
         }
     }
 
@@ -624,8 +833,11 @@ public partial class MainWindow : Window
 
     private void UpdateInputState()
     {
-        var isPending = CurrentChat?.IsPending == true;
-        SendButton.IsEnabled = !isPending;
+        var chat = CurrentChat;
+        var isPending = chat?.IsPending == true;
+        var canSend = chat is not null && !chat.IsSessionMissing && !isPending;
+        SendButton.IsEnabled = canSend;
+        PromptTextBox.IsEnabled = canSend;
         StopButton.IsEnabled = isPending;
         StopButton.Visibility = isPending ? Visibility.Visible : Visibility.Collapsed;
         PromptBeam.Visibility = isPending ? Visibility.Visible : Visibility.Collapsed;

@@ -36,6 +36,7 @@ public sealed class ChatSessionView
 {
     public string Title { get; set; }
     public string? CopilotSessionId { get; set; }
+    public bool IsSessionMissing { get; set; }
     public bool IsPageInitialized { get; set; }
     public bool IsPending { get; set; }
     public string? SystemPrompt { get; set; }
@@ -47,4 +48,28 @@ public sealed class ChatSessionView
     {
         Title = title;
     }
+}
+
+public sealed class PersistedChatState
+{
+    public List<PersistedChatSession> Sessions { get; set; } = [];
+    public string? SelectedSessionId { get; set; }
+}
+
+public sealed class PersistedChatSession
+{
+    public string Title { get; set; } = "";
+    public string? CopilotSessionId { get; set; }
+    public string? SystemPrompt { get; set; }
+    public bool IsSessionMissing { get; set; }
+    public List<PersistedChatMessage> Messages { get; set; } = [];
+}
+
+public sealed class PersistedChatMessage
+{
+    public string Id { get; set; } = "";
+    public ChatMessageKind Kind { get; set; }
+    public string Content { get; set; } = "";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
 }
