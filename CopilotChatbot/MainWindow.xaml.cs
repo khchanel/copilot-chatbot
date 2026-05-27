@@ -178,12 +178,21 @@ public partial class MainWindow : Window
     {
         if (chat.IsSessionMissing || string.IsNullOrWhiteSpace(prompt)) return;
 
-        if (await TryHandleLocalShortcutAsync(chat, prompt))
+        var promptToSend = prompt;
+        var userMessageContent = prompt;
+        if (await TryHandleLocalShortcutAsync(chat, prompt) is { } shortcutResult)
         {
-            return;
+            if (string.IsNullOrWhiteSpace(shortcutResult.PromptToSend))
+            {
+                AddLocalShortcutMessage(chat, shortcutResult.Kind, shortcutResult.Content);
+                return;
+            }
+
+            promptToSend = shortcutResult.PromptToSend;
+            userMessageContent = shortcutResult.UserVisiblePrompt ?? prompt;
         }
 
-        chat.Messages.Add(new ChatMessage { Kind = ChatMessageKind.User, Content = prompt });
+        chat.Messages.Add(new ChatMessage { Kind = ChatMessageKind.User, Content = userMessageContent });
         RenderChat(chat);
         chat.IsPending = true;
         GetTabContent(chat)?.SetState(true, false);
@@ -191,7 +200,7 @@ public partial class MainWindow : Window
         try
         {
             var model = ModelComboBox.SelectedItem as ModelChoice;
-            await _copilot.SendAsync(chat, prompt, _settings, model, ReasoningComboBox.SelectedItem?.ToString());
+            await _copilot.SendAsync(chat, promptToSend, _settings, model, ReasoningComboBox.SelectedItem?.ToString());
             SaveOpenChats();
         }
         catch (Exception ex)
@@ -229,16 +238,15 @@ public partial class MainWindow : Window
     private ChatTabContent? GetTabContent(ChatSessionView chat) =>
         _tabContents.TryGetValue(chat, out var tc) ? tc : null;
 
-    private async Task<bool> TryHandleLocalShortcutAsync(ChatSessionView chat, string prompt)
+    private async Task<LocalShortcutResult?> TryHandleLocalShortcutAsync(ChatSessionView chat, string prompt)
     {
         var result = await _localShortcutService.TryExecuteAsync(chat, prompt);
         if (result is null)
         {
-            return false;
+            return null;
         }
 
-        AddLocalShortcutMessage(chat, result.Kind, result.Content);
-        return true;
+        return result;
     }
 
     private void LocalShortcut_StatusChanged(ChatSessionView chat, string? status)

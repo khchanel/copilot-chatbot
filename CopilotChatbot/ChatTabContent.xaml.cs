@@ -68,6 +68,22 @@ public partial class ChatTabContent : UserControl
         })()
         """;
 
+    private const string ExpandAllArticlesScript = """
+        (function() {
+            document.querySelectorAll('article.msg details').forEach(function(details) {
+                details.open = true;
+            });
+        })()
+        """;
+
+    private const string CollapseAllArticlesScript = """
+        (function() {
+            document.querySelectorAll('article.msg details').forEach(function(details) {
+                details.open = false;
+            });
+        })()
+        """;
+
     public ChatTabContent()
     {
         InitializeComponent();
@@ -165,6 +181,18 @@ public partial class ChatTabContent : UserControl
     {
         if (BrowserHost.Content is WebView2 { CoreWebView2: not null } browser)
             _ = browser.ExecuteScriptAsync("window.scrollTo(0, 0)");
+    }
+
+    private void ExpandAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (BrowserHost.Content is WebView2 { CoreWebView2: not null } browser)
+            _ = browser.ExecuteScriptAsync(ExpandAllArticlesScript);
+    }
+
+    private void CollapseAll_Click(object sender, RoutedEventArgs e)
+    {
+        if (BrowserHost.Content is WebView2 { CoreWebView2: not null } browser)
+            _ = browser.ExecuteScriptAsync(CollapseAllArticlesScript);
     }
 
     private void TryRaiseSend()
