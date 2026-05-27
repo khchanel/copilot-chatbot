@@ -2,21 +2,34 @@
 
 Desktop chat client for GitHub Copilot built with WPF and .NET 9 on Windows.
 
-It provides a tabbed chat UI, model selection, reasoning effort controls, permission prompts, and rich markdown/HTML rendering through WebView2.
+It provides a tabbed chat UI, session restore, model selection, reasoning effort controls, permission prompts, local slash shortcuts, MCP/agent/skill visibility, and rich Markdown/HTML rendering through WebView2.
 
 ## Features
 
 - Multi-tab chat sessions with per-tab system prompts
+- Saved chat sessions restored on startup
 - Live model discovery from GitHub Copilot SDK
 - Reasoning effort selection for models that support it
+- Chat navigation controls:
+  - Scroll to top and bottom
+  - Jump to previous and next user question
+- Turn-based response display, where all responses for a prompt are grouped under the user message
+- Activity bar for transient Copilot status such as reasoning, tool execution, background agent progress, and shortcut activity
 - Tool and permission workflow:
   - Folder access rules (read/read-write)
   - Allowed tools and hosts lists
   - Saved permission rules
+  - Per-command shell approvals for Copilot SDK shell permission requests
+  - Memory permission toggle through `/memory`
 - User secrets mapped to environment variables (stored encrypted with Windows DPAPI)
 - Configurable working directory for Copilot CLI execution
+- MCP server, agent, and skill capability view
+- Local slash shortcuts for inspecting or changing runtime state
+- Extra agent and skill folder configuration
+- Light, dark, and follow-the-sun theme options
 - Optional debug logging
-- Markdown rendering (with syntax-friendly code blocks) and embedded HTML previews
+- Markdown rendering, collapsible message cards, response pop-out windows, and embedded HTML previews
+- Custom application icon and Windows `.ico` packaging
 
 ## Tech Stack
 
@@ -59,15 +72,30 @@ Open **Settings** in the app and configure:
 - Optional user secrets (`Name`, `Environment Variable`, `Value`)
 - Optional permission defaults and allow-lists
 - Optional default system prompt
+- Optional extra agent and skill folders
+- Preferred appearance/theme
 - Optional debug logging
 
 Then use **Refresh Models** to fetch available models from the Copilot runtime.
+
+## Local Slash Shortcuts
+
+Shortcuts are handled locally by the app and are not sent as chat prompts.
+
+- `/mcp` - show registered MCP servers, their status, and reported tools.
+- `/cwd` - show the effective Copilot CLI working directory.
+- `/cwd <folder>` - set the Copilot CLI working directory. Quoted paths, relative paths, `.`, and `~` are supported.
+- `/env` - show Copilot-relevant environment details. Token values are redacted.
+- `/memory` - show the current long-term memory permission state.
+- `/memory on` - approve memory permission requests automatically across sessions.
+- `/memory off` - reject memory permission requests automatically across sessions.
 
 ## Configuration and Data Files
 
 The app stores local configuration under:
 
 - `%APPDATA%\CopilotChatbot\settings.json`
+- `%APPDATA%\CopilotChatbot\chat-sessions.json`
 
 If debug logging is enabled, logs are written to:
 
@@ -77,15 +105,32 @@ If debug logging is enabled, logs are written to:
 
 - The app loads user MCP server config from:
   - `~/.copilot/mcp-config.json`
-- The configured working directory is also where Copilot CLI runs; project-level Copilot/MCP config is typically resolved relative to that folder.
+  - `%APPDATA%\GitHub Copilot\mcp-config.json`
+  - `<working-dir>/.github/copilot/mcp.json`
+  - `<working-dir>/.copilot/mcp-config.json`
+- A bundled read-only GitHub MCP server is registered by default.
+- The configured working directory is where Copilot CLI runs.
+- Project-level Copilot/MCP config is typically resolved relative to the working directory.
+- Agents and skills are loaded from the default Copilot locations plus any extra folders configured in Settings.
+
+Default agent and skill locations shown by the app:
+
+- `~/.copilot/agents`
+- `<working-dir>/.github/agents`
+- `~/.copilot/skills`
+- `<working-dir>/.github/skills`
 
 ## Project Structure
 
 - `CopilotChatbot/` - WPF application
 - `CopilotChatbot/Services/` - runtime services (Copilot client, rendering, settings, logging)
+- `CopilotChatbot/Services/LocalShortcutService.cs` - local slash shortcut registry and handlers
 - `CopilotChatbot/Models/` - settings and chat data models
+- `CopilotChatbot/Assets/` - application icon and bundled MCP server metadata
 - `CopilotChatbot/MainWindow.*` - main chat UI and interaction logic
+- `CopilotChatbot/ChatTabContent.*` - per-tab chat input, status, and navigation controls
 - `CopilotChatbot/SettingsWindow.*` - settings UI and persistence wiring
+- `.github/workflows/dotnet-build.yaml` - GitHub Actions build workflow
 
 ## Troubleshooting
 
@@ -93,11 +138,21 @@ If debug logging is enabled, logs are written to:
   - Verify token and Copilot entitlement.
   - Open Settings and confirm Working Directory is valid.
   - Click **Refresh Models** again.
+- MCP tools do not appear:
+  - Run `/mcp` to inspect the registered MCP servers and tools.
+  - Run `/cwd` to confirm project-level MCP config is being resolved from the expected folder.
 - Authentication or connection failures:
   - Re-check token value in Settings.
   - Confirm network/proxy restrictions do not block Copilot CLI.
+- Memory requests are rejected:
+  - Run `/memory` to check the current state.
+  - Run `/memory on` if you want Copilot memory writes/votes to be approved automatically.
 - Web content not rendering:
   - Ensure WebView2 runtime is available and updated on the machine.
+- Manual GitHub Actions run does not start:
+  - Confirm Actions are enabled for the repository.
+  - Confirm the workflow exists on the default branch at `.github/workflows/dotnet-build.yaml`.
+  - Check GitHub Status if the UI reports that the workflow could not be queued.
 
 ## Build Configuration
 
@@ -107,3 +162,38 @@ Current project defaults (from `CopilotChatbot.csproj`):
 - `RuntimeIdentifier`: `win-x64`
 - `UseWPF`: `true`
 - `SelfContained`: `false`
+- `ApplicationIcon`: `Assets\AppIcon.ico`
+
+## GitHub Actions
+
+The repository includes a Windows build workflow:
+
+- Runs on pushes to `main` or `master`
+- Runs on pull requests targeting `main` or `master`
+- Can be started manually from the GitHub Actions UI
+- Builds with .NET 9 on `windows-latest`
+
+Build versioning uses:
+
+- `VERSION_PREFIX` repository variable, defaulting to `1.0`
+- `github.run_number` as the final build number
+
+For example, with `VERSION_PREFIX=1.0`, workflow runs produce versions like:
+
+- `1.0.1`
+- `1.0.2`
+- `1.0.3`
+
+Set the prefix in:
+
+```text
+Repository Settings > Secrets and variables > Actions > Variables
+Name: VERSION_PREFIX
+Value: 1.0
+```
+
+## License
+
+This project uses an MIT-style non-commercial license. See `LICENSE`.
+
+Note: this is not the standard OSI MIT License because commercial use is restricted.

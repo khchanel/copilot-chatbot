@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly HtmlRenderer _htmlRenderer = new();
     private readonly DebugLogger _debugLogger = new();
     private readonly CopilotChatService _copilot;
+    private readonly ILocalShortcutService _localShortcutService;
     private readonly List<ModelChoice> _models = [];
     private readonly Dictionary<ChatSessionView, long> _renderRevisions = [];
     private readonly Dictionary<ChatSessionView, ChatTabContent> _tabContents = [];
@@ -42,6 +43,8 @@ public partial class MainWindow : Window
         _copilot.UsageUpdated += Copilot_UsageUpdated;
         _copilot.SessionPendingChanged += Copilot_SessionPendingChanged;
         _copilot.StatusChanged += Copilot_StatusChanged;
+        _localShortcutService = new LocalShortcutService(_copilot, _settingsStore);
+        _localShortcutService.StatusChanged += LocalShortcut_StatusChanged;
         Loaded += MainWindow_Loaded;
         Closed += MainWindow_Closed;
     }
@@ -175,6 +178,11 @@ public partial class MainWindow : Window
     {
         if (chat.IsSessionMissing || string.IsNullOrWhiteSpace(prompt)) return;
 
+        if (await TryHandleLocalShortcutAsync(chat, prompt))
+        {
+            return;
+        }
+
         chat.Messages.Add(new ChatMessage { Kind = ChatMessageKind.User, Content = prompt });
         RenderChat(chat);
         chat.IsPending = true;
@@ -220,6 +228,44 @@ public partial class MainWindow : Window
 
     private ChatTabContent? GetTabContent(ChatSessionView chat) =>
         _tabContents.TryGetValue(chat, out var tc) ? tc : null;
+
+    private async Task<bool> TryHandleLocalShortcutAsync(ChatSessionView chat, string prompt)
+    {
+        var result = await _localShortcutService.TryExecuteAsync(chat, prompt);
+        if (result is null)
+        {
+            return false;
+        }
+
+        AddLocalShortcutMessage(chat, result.Kind, result.Content);
+        return true;
+    }
+
+    private void LocalShortcut_StatusChanged(ChatSessionView chat, string? status)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            if (status is null)
+            {
+                UpdateStatusBar(chat);
+            }
+            else
+            {
+                GetTabContent(chat)?.SetStatus(status);
+            }
+        });
+    }
+
+    private void AddLocalShortcutMessage(ChatSessionView chat, ChatMessageKind kind, string content)
+    {
+        chat.Messages.Add(new ChatMessage
+        {
+            Kind = kind,
+            Content = content
+        });
+        RenderChat(chat);
+        SaveOpenChats();
+    }
 
     private async Task RefreshModelsAsync(bool showErrorDialog, bool allowFallback)
     {
@@ -827,7 +873,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var messages = FilterMessages(chat.Messages);
+        var messages = FilterMessages(chat.Messages).ToList();
 
         if (!chat.IsPageInitialized)
         {
@@ -840,10 +886,7 @@ public partial class MainWindow : Window
         // and preserve the scroll position.
         try
         {
-            var payload = messages.Select(m => new BrowserMessagePatch(
-                m.Id,
-                BuildRenderSignature(m),
-                _htmlRenderer.RenderMessageFragment(m, _isDarkTheme))).ToArray();
+            var payload = BuildBrowserMessagePatches(messages).ToArray();
             var jsonPatch = System.Text.Json.JsonSerializer.Serialize(payload);
             if (!IsLatestRender(chat, revision))
             {
@@ -864,11 +907,16 @@ public partial class MainWindow : Window
                         var id = patch.Id;
                         desired.add(id);
                         var selector = 'article[data-mid=\"' + CSS.escape(id) + '\"]';
-                        var node = m.querySelector(selector);
+                        var node = Array.from(m.children).find(function(child) { return child.matches && child.matches(selector); });
                         var oldOpen = null;
+                        var openStates = {};
                         if (node) {
                             var oldDetails = node.querySelector('details');
                             oldOpen = oldDetails ? oldDetails.open : null;
+                            Array.from(node.querySelectorAll('article[data-mid]')).forEach(function(article) {
+                                var details = article.querySelector('details');
+                                if (details) openStates[article.dataset.mid] = details.open;
+                            });
                         }
 
                         if (!node) {
@@ -885,10 +933,11 @@ public partial class MainWindow : Window
                             if (!next) return node;
                             var curDetails = node.querySelector('details');
                             var nextDetails = next.querySelector('details');
+                            var isTurnNode = !!(node.querySelector('.turn-responses') || next.querySelector('.turn-responses'));
 
                             // For streaming updates, patch in-place so only the active
                             // response body changes and iframe loader stays local.
-                            if (curDetails && nextDetails) {
+                            if (curDetails && nextDetails && !isTurnNode) {
                                 node.className = next.className;
                                 node.id = next.id;
                                 node.dataset.mid = next.dataset.mid || id;
@@ -917,6 +966,12 @@ public partial class MainWindow : Window
                                     var replacedDetails = node.querySelector('details');
                                     if (replacedDetails) replacedDetails.open = oldOpen;
                                 }
+                                Array.from(node.querySelectorAll('article[data-mid]')).forEach(function(article) {
+                                    var details = article.querySelector('details');
+                                    if (details && Object.prototype.hasOwnProperty.call(openStates, article.dataset.mid)) {
+                                        details.open = openStates[article.dataset.mid];
+                                    }
+                                });
                             }
                         }
                         return node;
@@ -931,7 +986,7 @@ public partial class MainWindow : Window
                         }
                     });
 
-                    Array.from(m.querySelectorAll('article[data-mid]')).forEach(function(node) {
+                    Array.from(m.children).forEach(function(node) {
                         if (!desired.has(node.dataset.mid)) {
                             node.remove();
                         }
@@ -971,6 +1026,52 @@ public partial class MainWindow : Window
     }
 
     private sealed record BrowserMessagePatch(string Id, string Signature, string Html);
+
+    private IEnumerable<BrowserMessagePatch> BuildBrowserMessagePatches(IReadOnlyList<ChatMessage> messages)
+    {
+        ChatMessage? currentUser = null;
+        var responses = new List<ChatMessage>();
+
+        foreach (var message in messages)
+        {
+            if (message.Kind is ChatMessageKind.User)
+            {
+                if (currentUser is not null)
+                {
+                    yield return BuildTurnPatch(currentUser, responses);
+                    responses.Clear();
+                }
+
+                currentUser = message;
+            }
+            else if (currentUser is null)
+            {
+                yield return new BrowserMessagePatch(
+                    message.Id,
+                    BuildRenderSignature(message),
+                    _htmlRenderer.RenderMessageFragment(message, _isDarkTheme));
+            }
+            else
+            {
+                responses.Add(message);
+            }
+        }
+
+        if (currentUser is not null)
+        {
+            yield return BuildTurnPatch(currentUser, responses);
+        }
+    }
+
+    private BrowserMessagePatch BuildTurnPatch(ChatMessage userMessage, IReadOnlyList<ChatMessage> responses)
+    {
+        var signature = string.Join("\n---turn-message---\n",
+            responses.Prepend(userMessage).Select(BuildRenderSignature));
+        return new BrowserMessagePatch(
+            userMessage.Id,
+            signature,
+            _htmlRenderer.RenderTurnFragment(userMessage, responses, _isDarkTheme));
+    }
 
     private void ShowDetailsCheckBox_Click(object sender, RoutedEventArgs e)
     {

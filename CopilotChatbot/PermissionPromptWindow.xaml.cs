@@ -23,6 +23,8 @@ public partial class PermissionPromptWindow : Window
             return $"Tool: {prompt.ToolName}";
         if (!string.IsNullOrWhiteSpace(prompt.FileName))
             return $"File or folder: {prompt.FileName}";
+        if (prompt.Commands.Count > 0)
+            return $"Shell commands: {string.Join(", ", prompt.Commands.Select(command => command.Identifier))}";
         if (!string.IsNullOrWhiteSpace(prompt.Command))
             return "Shell command access";
         return "The Copilot SDK requested access outside the current whitelist.";
@@ -30,12 +32,18 @@ public partial class PermissionPromptWindow : Window
 
     private static string BuildDetails(PermissionPrompt prompt)
     {
+        var commandIdentifiers = prompt.Commands.Count == 0
+            ? ""
+            : string.Join(Environment.NewLine, prompt.Commands.Select(command =>
+                $"  - {command.Identifier}{(command.ReadOnly ? " (read-only)" : "")}"));
+
         return string.Join(Environment.NewLine, new[]
         {
             $"Kind: {prompt.Kind}",
             $"Tool: {prompt.ToolName}",
             $"File: {prompt.FileName}",
             $"Host: {prompt.Host}",
+            prompt.Commands.Count == 0 ? "" : $"Commands:{Environment.NewLine}{commandIdentifiers}",
             $"Command: {prompt.Command}"
         }.Where(line => !line.EndsWith(": ", StringComparison.Ordinal)));
     }
