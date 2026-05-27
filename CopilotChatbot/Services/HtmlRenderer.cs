@@ -73,16 +73,18 @@ public sealed class HtmlRenderer
 html, body { margin:0; padding:0; background:var(--bg); color:var(--text); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 main { padding:10px 14px; }
 .msg { margin:0 0 7px 0; border:1px solid var(--border); border-radius:8px; background:var(--card); overflow:hidden; box-shadow:0 1px 2px rgba(0,0,0,.07); }
+.turn-responses { padding:0 8px 8px 8px; }
+.turn-responses .msg { margin:7px 0 0 0; box-shadow:none; }
 .head, details > summary.head { display:flex; align-items:center; gap:5px; padding:3px 8px; border-bottom:1px solid var(--border); font-size:11px; color:var(--muted); }
 details > summary.head { cursor:pointer; user-select:none; list-style:none; border-bottom:0; }
 details > summary.head::-webkit-details-marker { display:none; }
 details[open] > summary.head { border-bottom:1px solid var(--border); }
 .xicon { font-size:8px; color:var(--icon-dim); transition:transform .14s; flex-shrink:0; }
-details[open] .xicon { transform:rotate(90deg); }
+details[open] > summary.head .xicon { transform:rotate(90deg); }
 .avatar { width:17px; height:17px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:8px; flex-shrink:0; font-weight:800; }
 .kind-label { font-weight:700; font-size:10px; letter-spacing:.04em; text-transform:uppercase; flex-shrink:0; }
 .preview { font-size:10px; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
-details[open] .preview { display:none; }
+details[open] > summary.head .preview { display:none; }
 .ts { margin-left:auto; font-size:10px; opacity:.6; flex-shrink:0; }
 .dur { font-size:10px; opacity:.55; flex-shrink:0; }
 details > summary.head .ts { margin-left:0; }
@@ -157,12 +159,45 @@ document.addEventListener('click', e => {
     public string RenderBody(IEnumerable<ChatMessage> messages, bool darkTheme)
     {
         var body = new StringBuilder();
+        ChatMessage? currentUser = null;
+        var responses = new List<ChatMessage>();
+
         foreach (var message in messages)
-            body.Append(RenderMessage(message, darkTheme));
+        {
+            if (message.Kind is ChatMessageKind.User)
+            {
+                if (currentUser is not null)
+                {
+                    body.Append(RenderUserTurn(currentUser, responses, darkTheme));
+                    responses.Clear();
+                }
+
+                currentUser = message;
+            }
+            else if (currentUser is null)
+            {
+                body.Append(RenderMessage(message, darkTheme));
+            }
+            else
+            {
+                responses.Add(message);
+            }
+        }
+
+        if (currentUser is not null)
+        {
+            body.Append(RenderUserTurn(currentUser, responses, darkTheme));
+        }
+
         return body.ToString();
     }
 
     public string RenderMessageFragment(ChatMessage message, bool darkTheme) => RenderMessage(message, darkTheme);
+
+    public string RenderTurnFragment(ChatMessage message, IEnumerable<ChatMessage> responses, bool darkTheme) =>
+        message.Kind is ChatMessageKind.User
+            ? RenderUserTurn(message, responses, darkTheme)
+            : RenderMessage(message, darkTheme);
 
     public string RenderStandalone(ChatMessage message, bool darkTheme = false) => RenderFrameSource(message, includeDocumentShell: true, darkTheme: darkTheme);
 
@@ -222,6 +257,50 @@ document.addEventListener('click', e => {
     <button class="open-btn" data-open-id="{{msgIdHtml}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
   </div>
   <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
+</article>
+""";
+    }
+
+    private string RenderUserTurn(ChatMessage userMessage, IEnumerable<ChatMessage> responses, bool darkTheme)
+    {
+        var css = userMessage.Kind.ToString().ToLowerInvariant();
+        var time = WebUtility.HtmlEncode(userMessage.CreatedAt.ToString("g"));
+        var durHtml = FormatDuration(userMessage);
+        var contentHtml = RenderInlineContent(userMessage);
+        var avatarHtml = WebUtility.HtmlEncode("U");
+        var kindHtml = WebUtility.HtmlEncode("You");
+        var msgId = userMessage.Id;
+        var msgIdHtml = WebUtility.HtmlEncode(msgId);
+        var preview = WebUtility.HtmlEncode(GetPreview(userMessage.Content));
+        var responseHtml = new StringBuilder();
+
+        foreach (var response in responses)
+        {
+            responseHtml.Append(RenderMessage(response, darkTheme));
+        }
+
+        var responsesBlock = responseHtml.Length == 0
+            ? ""
+            : $"""
+    <div class="turn-responses">
+{responseHtml}
+    </div>
+""";
+
+        return $$"""
+<article id="msg-{{msgIdHtml}}" class="msg {{css}}" data-mid="{{msgIdHtml}}">
+  <details open>
+    <summary class="head">
+      <span class="xicon">▶</span>
+      <div class="avatar">{{avatarHtml}}</div>
+      <span class="kind-label">{{kindHtml}}</span>
+      <span class="preview">{{preview}}</span>
+      <span class="ts">{{time}}</span>{{(durHtml.Length > 0 ? $"\n      <span class=\"dur\">· {durHtml}</span>" : "")}}
+      <button class="open-btn" data-open-id="{{msgIdHtml}}" title="Open"><svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V9M10 2h4m0 0v4m0-4L7.5 8.5"/></svg></button>
+    </summary>
+    <div class="content"><div class="frame-body">{{contentHtml}}</div></div>
+{{responsesBlock}}
+  </details>
 </article>
 """;
     }

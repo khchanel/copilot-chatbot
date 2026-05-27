@@ -34,6 +34,7 @@ public sealed class PermissionSettings
     public ObservableCollection<PermissionRule> SavedRules { get; set; } = [];
     public bool AllowMcpByDefault { get; set; } = false;
     public bool AllowCustomToolsByDefault { get; set; } = false;
+    public bool AllowMemoryByDefault { get; set; } = false;
 }
 
 public sealed class PermissionRule
@@ -42,13 +43,14 @@ public sealed class PermissionRule
     public string ToolName { get; set; } = "";
     public string FileName { get; set; } = "";
     public string Command { get; set; } = "";
+    public string CommandIdentifiers { get; set; } = "";
     public string Host { get; set; } = "";
 
     public string Summary
     {
         get
         {
-            var parts = new[] { ToolName, Host, FileName, Command }
+            var parts = new[] { ToolName, Host, FileName, CommandIdentifiers, Command }
                 .Where(part => !string.IsNullOrWhiteSpace(part));
             return string.Join(" | ", parts);
         }

@@ -489,19 +489,26 @@ public sealed class CopilotChatService : IAsyncDisposable
         var prompt = ToPermissionPrompt(request);
         var key = BuildPermissionKey(prompt);
 
-        if (IsAllowedBySettings(request, settings) || _sessionPermissionApprovals.ContainsKey(key))
+        if (prompt.Kind.Equals("memory", StringComparison.OrdinalIgnoreCase) &&
+            !settings.Permissions.AllowMemoryByDefault)
         {
-            _logger.Log("PERMISSION-AUTO", $"Kind={prompt.Kind} Tool={prompt.ToolName} File={prompt.FileName} Host={prompt.Host} | auto-approved");
+            _logger.Log("PERMISSION-AUTO", "Kind=memory | rejected because memory is disabled");
+            return new PermissionRequestResult { Kind = PermissionRequestResultKind.Rejected };
+        }
+
+        if (IsAllowedBySettings(prompt, settings) || IsAllowedForSession(prompt) || _sessionPermissionApprovals.ContainsKey(key))
+        {
+            _logger.Log("PERMISSION-AUTO", $"Kind={prompt.Kind} Tool={prompt.ToolName} File={prompt.FileName} Host={prompt.Host} Commands={FormatCommandIdentifiers(prompt.Commands)} | auto-approved");
             return new PermissionRequestResult { Kind = PermissionRequestResultKind.Approved };
         }
 
-        _logger.Log("PERMISSION-REQUEST", $"Kind={prompt.Kind} Tool={prompt.ToolName} File={prompt.FileName} Host={prompt.Host} Command={prompt.Command}");
+        _logger.Log("PERMISSION-REQUEST", $"Kind={prompt.Kind} Tool={prompt.ToolName} File={prompt.FileName} Host={prompt.Host} Commands={FormatCommandIdentifiers(prompt.Commands)} Command={prompt.Command}");
         var decision = await _permissionPrompt(prompt);
         _logger.Log("PERMISSION-DECISION", $"Kind={prompt.Kind} Tool={prompt.ToolName} | Decision={decision}");
 
         if (decision == PermissionPromptDecision.AllowForSession)
         {
-            _sessionPermissionApprovals.TryAdd(key, 0);
+            SaveSessionPermissionApproval(prompt);
         }
         else if (decision == PermissionPromptDecision.SaveToSettings)
         {
@@ -527,16 +534,23 @@ public sealed class CopilotChatService : IAsyncDisposable
         "objects.githubusercontent.com",
     };
 
-    private static bool IsAllowedBySettings(PermissionRequest request, AppSettings settings)
+    private static bool IsAllowedBySettings(PermissionPrompt prompt, AppSettings settings)
     {
-        var kind = GetString(request, "Kind") ?? "";
-        var tool = GetString(request, "ToolName") ?? "";
-        var file = GetString(request, "FileName") ?? GetString(request, "Path") ?? "";
-        var host = TryGetHost(GetString(request, "Host")) ?? TryGetHost(GetString(request, "Url")) ?? "";
-        var command = GetString(request, "FullCommandText") ?? "";
+        var kind = prompt.Kind;
+        var tool = prompt.ToolName ?? "";
+        var file = prompt.FileName ?? "";
+        var host = prompt.Host ?? "";
+        var command = prompt.Command ?? "";
+        var commandIdentifiers = prompt.Commands.Select(command => command.Identifier).ToArray();
 
-        if (settings.Permissions.SavedRules.Any(rule => RuleMatches(rule, kind, tool, file, command, host)))
+        if (settings.Permissions.SavedRules.Any(rule => RuleMatches(rule, kind, tool, file, command, host, commandIdentifiers)))
             return true;
+
+        if (commandIdentifiers.Length > 0)
+        {
+            if (AllCommandIdentifiersAllowed(commandIdentifiers, settings.Permissions.SavedRules, kind, tool, file, host))
+                return true;
+        }
 
         // Read-only file access is allowed by default
         if (kind.Equals("read", StringComparison.OrdinalIgnoreCase))
@@ -546,6 +560,8 @@ public sealed class CopilotChatService : IAsyncDisposable
         if (kind.Equals("mcp", StringComparison.OrdinalIgnoreCase) && settings.Permissions.AllowMcpByDefault)
             return true;
         if (kind.Equals("custom_tool", StringComparison.OrdinalIgnoreCase) && settings.Permissions.AllowCustomToolsByDefault)
+            return true;
+        if (kind.Equals("memory", StringComparison.OrdinalIgnoreCase) && settings.Permissions.AllowMemoryByDefault)
             return true;
 
         if ((kind.Equals("custom_tool", StringComparison.OrdinalIgnoreCase) ||
@@ -586,12 +602,14 @@ public sealed class CopilotChatService : IAsyncDisposable
     private static PermissionPrompt ToPermissionPrompt(PermissionRequest request)
     {
         var url = GetString(request, "Url");
+        var commands = GetShellCommands(request);
         return new PermissionPrompt(
             GetString(request, "Kind") ?? "unknown",
             GetString(request, "ToolName"),
             GetString(request, "FileName") ?? GetString(request, "Path"),
             GetString(request, "FullCommandText"),
-            TryGetHost(GetString(request, "Host")) ?? TryGetHost(url));
+            TryGetHost(GetString(request, "Host")) ?? TryGetHost(url),
+            commands);
     }
 
     private static string BuildUserInputPromptMessage(UserInputPrompt prompt)
@@ -631,23 +649,46 @@ public sealed class CopilotChatService : IAsyncDisposable
             return;
         }
 
-        var rule = new PermissionRule
+        if (prompt.Commands.Count > 0)
+        {
+            foreach (var command in prompt.Commands)
+            {
+                var commandRule = new PermissionRule
+                {
+                    Kind = prompt.Kind,
+                    ToolName = prompt.ToolName ?? "",
+                    FileName = prompt.FileName ?? "",
+                    CommandIdentifiers = command.Identifier,
+                    Host = prompt.Host ?? ""
+                };
+
+                if (!settings.Permissions.SavedRules.Any(existing =>
+                        RuleMatches(existing, commandRule.Kind, commandRule.ToolName, commandRule.FileName, "", commandRule.Host, [command.Identifier])))
+                {
+                    settings.Permissions.SavedRules.Add(commandRule);
+                }
+            }
+            return;
+        }
+
+        var exactRule = new PermissionRule
         {
             Kind = prompt.Kind,
             ToolName = prompt.ToolName ?? "",
             FileName = prompt.FileName ?? "",
             Command = prompt.Command ?? "",
+            CommandIdentifiers = FormatCommandIdentifiers(prompt.Commands),
             Host = prompt.Host ?? ""
         };
 
         if (!settings.Permissions.SavedRules.Any(existing =>
-                RuleMatches(existing, rule.Kind, rule.ToolName, rule.FileName, rule.Command, rule.Host)))
+                RuleMatches(existing, exactRule.Kind, exactRule.ToolName, exactRule.FileName, exactRule.Command, exactRule.Host, prompt.Commands.Select(command => command.Identifier))))
         {
-            settings.Permissions.SavedRules.Add(rule);
+            settings.Permissions.SavedRules.Add(exactRule);
         }
     }
 
-    private static bool RuleMatches(PermissionRule rule, string kind, string tool, string file, string command, string host)
+    private static bool RuleMatches(PermissionRule rule, string kind, string tool, string file, string command, string host, IEnumerable<string> commandIdentifiers)
     {
         if (!rule.Kind.Equals(kind, StringComparison.OrdinalIgnoreCase))
             return false;
@@ -655,12 +696,75 @@ public sealed class CopilotChatService : IAsyncDisposable
         return ValueMatches(rule.ToolName, tool) &&
                PathMatches(rule.FileName, file) &&
                ValueMatches(rule.Command, command) &&
+               CommandIdentifiersMatch(rule.CommandIdentifiers, commandIdentifiers) &&
                ValueMatches(rule.Host, host);
+    }
+
+    private static bool AllCommandIdentifiersAllowed(
+        IReadOnlyCollection<string> commandIdentifiers,
+        IEnumerable<PermissionRule> rules,
+        string kind,
+        string tool,
+        string file,
+        string host)
+    {
+        return commandIdentifiers.All(commandIdentifier =>
+            rules.Any(rule => RuleMatches(rule, kind, tool, file, "", host, [commandIdentifier])));
+    }
+
+    private bool IsAllowedForSession(PermissionPrompt prompt)
+    {
+        if (prompt.Commands.Count == 0)
+            return false;
+
+        return prompt.Commands.All(command =>
+            _sessionPermissionApprovals.ContainsKey(BuildPermissionKey(prompt with
+            {
+                Command = null,
+                Commands = [command]
+            })));
+    }
+
+    private void SaveSessionPermissionApproval(PermissionPrompt prompt)
+    {
+        if (prompt.Commands.Count == 0)
+        {
+            _sessionPermissionApprovals.TryAdd(BuildPermissionKey(prompt), 0);
+            return;
+        }
+
+        foreach (var command in prompt.Commands)
+        {
+            _sessionPermissionApprovals.TryAdd(BuildPermissionKey(prompt with
+            {
+                Command = null,
+                Commands = [command]
+            }), 0);
+        }
     }
 
     private static bool ValueMatches(string ruleValue, string requestedValue)
         => string.IsNullOrWhiteSpace(ruleValue) ||
            ruleValue.Equals(requestedValue, StringComparison.OrdinalIgnoreCase);
+
+    private static bool CommandIdentifiersMatch(string ruleValue, IEnumerable<string> requestedValues)
+    {
+        var requested = requestedValues
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(NormalizeCommandIdentifier)
+            .ToArray();
+        if (requested.Length == 0)
+            return string.IsNullOrWhiteSpace(ruleValue);
+        if (string.IsNullOrWhiteSpace(ruleValue))
+            return true;
+
+        var allowed = ruleValue
+            .Split([';', '|', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeCommandIdentifier)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return requested.All(allowed.Contains);
+    }
 
     private static bool PathMatches(string rulePath, string requestedPath)
     {
@@ -708,9 +812,30 @@ public sealed class CopilotChatService : IAsyncDisposable
             NormalizeKey(prompt.Kind),
             NormalizeKey(prompt.ToolName),
             NormalizeKey(prompt.FileName),
-            NormalizeKey(prompt.Command),
+            NormalizeKey(prompt.Commands.Count > 0 ? FormatCommandIdentifiers(prompt.Commands) : prompt.Command),
             NormalizeKey(prompt.Host)
         });
+
+    private static IReadOnlyList<ShellCommandPermission> GetShellCommands(PermissionRequest request)
+    {
+        if (request is not PermissionRequestShell shell)
+            return [];
+
+        return shell.Commands
+            .Where(command => !string.IsNullOrWhiteSpace(command.Identifier))
+            .Select(command => new ShellCommandPermission(command.Identifier, command.ReadOnly))
+            .DistinctBy(command => NormalizeCommandIdentifier(command.Identifier))
+            .ToArray();
+    }
+
+    private static string FormatCommandIdentifiers(IEnumerable<ShellCommandPermission> commands)
+        => string.Join("; ", commands
+            .Select(command => command.Identifier)
+            .Where(identifier => !string.IsNullOrWhiteSpace(identifier))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
+    private static string NormalizeCommandIdentifier(string value)
+        => value.Trim().ToUpperInvariant();
 
     private static string NormalizeKey(string? value)
         => string.IsNullOrWhiteSpace(value) ? "" : value.Trim().ToUpperInvariant();
@@ -738,6 +863,13 @@ public sealed class CopilotChatService : IAsyncDisposable
                 break;
             case AssistantMessageEvent message:
                 _logger.LogBlock("ASSISTANT", message.Data.Content);
+                if (IsBackgroundAgentStillProcessingMessage(message.Data.Content))
+                {
+                    RemoveMessage(chat, $"msg-{message.Data.MessageId}");
+                    StatusChanged?.Invoke(chat, NormalizeActivityStatus(message.Data.Content));
+                    break;
+                }
+
                 if (!string.IsNullOrWhiteSpace(message.Data.ReasoningText))
                     _logger.LogBlock("REASONING-INLINE", message.Data.ReasoningText);
                 AddOrUpdate(chat, ChatMessageKind.Assistant, message.Data.Content, $"msg-{message.Data.MessageId}");
@@ -921,6 +1053,28 @@ public sealed class CopilotChatService : IAsyncDisposable
         });
     }
 
+    private static bool IsBackgroundAgentStillProcessingMessage(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return false;
+        }
+
+        return content.Contains("background agent", StringComparison.OrdinalIgnoreCase)
+            && content.Contains("still processing", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeActivityStatus(string content)
+    {
+        var status = content.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        while (status.Contains("  ", StringComparison.Ordinal))
+        {
+            status = status.Replace("  ", " ");
+        }
+
+        return status;
+    }
+
     private static CopilotUsageStatus ToUsageStatus(AssistantUsageData data)
     {
         var quota = data.QuotaSnapshots?.Values.FirstOrDefault();
@@ -956,6 +1110,18 @@ public sealed class CopilotChatService : IAsyncDisposable
                 existing.Content = append ? existing.Content + content : content;
                 chat.Messages.RemoveAt(index);
                 chat.Messages.Insert(index, existing);
+            }
+        });
+    }
+
+    private static void RemoveMessage(ChatSessionView chat, string key)
+    {
+        App.Current.Dispatcher.Invoke(() =>
+        {
+            var existing = chat.Messages.FirstOrDefault(m => m.Id == key);
+            if (existing is not null)
+            {
+                chat.Messages.Remove(existing);
             }
         });
     }
@@ -1249,7 +1415,15 @@ public enum PermissionPromptDecision
     SaveToSettings
 }
 
-public sealed record PermissionPrompt(string Kind, string? ToolName, string? FileName, string? Command, string? Host);
+public sealed record PermissionPrompt(
+    string Kind,
+    string? ToolName,
+    string? FileName,
+    string? Command,
+    string? Host,
+    IReadOnlyList<ShellCommandPermission> Commands);
+
+public sealed record ShellCommandPermission(string Identifier, bool ReadOnly);
 
 public sealed record UserInputPrompt(string Question, IReadOnlyList<string> Choices, bool AllowFreeform);
 
