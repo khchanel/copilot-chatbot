@@ -4,6 +4,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using CopilotChatbot.Models;
 using GitHub.Copilot.SDK;
@@ -20,8 +21,11 @@ public sealed class CopilotChatService : IAsyncDisposable
     private CopilotClient? _client;
     private readonly ConcurrentDictionary<ChatSessionView, CopilotSession> _sessions = [];
     private readonly ConcurrentDictionary<string, byte> _sessionPermissionApprovals = [];
+    private readonly ConcurrentQueue<ChatUpdate> _pendingChatUpdates = new();
     private readonly Dictionary<string, McpServerConfig> _mcpServerConfigs = new();
+    private int _chatUpdateFlushScheduled;
     private volatile SessionCapabilitiesSnapshot _capabilitiesSnapshot = new([], [], []);
+    private static readonly TimeSpan ChatUpdateThrottleDelay = TimeSpan.FromMilliseconds(50);
     public SessionCapabilitiesSnapshot CapabilitiesSnapshot => _capabilitiesSnapshot;
     public event Action<CopilotUsageStatus>? UsageUpdated;
     public event Action<ChatSessionView, bool>? SessionPendingChanged;
@@ -235,7 +239,7 @@ public sealed class CopilotChatService : IAsyncDisposable
         var client = new CopilotClient(new CopilotClientOptions
         {
             CliPath = bundledCliPath,
-            GitHubToken = token,
+            //GitHubToken = token,
             Environment = env,
             Cwd = cwd
         });
@@ -256,8 +260,11 @@ public sealed class CopilotChatService : IAsyncDisposable
 
     // Reads MCP server configs from known locations and registers each server with the SDK.
     // Supported root keys: "mcpServers" (Copilot CLI format) and "servers" (VS Code mcp.json format).
-    // Searched paths (later entries override earlier ones): user-level fallbacks, then project-level.
-    private async Task LoadUserMcpConfigAsync(CopilotClient client, string cwd, CancellationToken cancellationToken)
+    // Searched paths are loaded first-wins by server name; existing entries are not replaced.
+    private async Task LoadUserMcpConfigAsync(
+        CopilotClient client,
+        string cwd,
+        CancellationToken cancellationToken)
     {
         var candidatePaths = new[]
         {
@@ -269,11 +276,66 @@ public sealed class CopilotChatService : IAsyncDisposable
             Path.Combine(cwd, ".copilot", "mcp-config.json"),
         };
 
-        // Built-in servers first (lowest precedence — user configs may override by name).
-        await LoadBuiltinMcpServersAsync(client, cancellationToken);
+        await EnsureDefaultGitHubMcpServerConfigAsync(candidatePaths[0], cancellationToken);
 
         foreach (var path in candidatePaths.Where(File.Exists).Distinct())
             await LoadMcpConfigFileAsync(client, path, cancellationToken);
+
+        // Built-in servers last as a fallback. Existing user/project entries win by name.
+        await LoadBuiltinMcpServersAsync(client, cancellationToken);
+    }
+
+    private async Task EnsureDefaultGitHubMcpServerConfigAsync(string configPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var root = File.Exists(configPath)
+                ? JsonNode.Parse(await File.ReadAllTextAsync(configPath, cancellationToken)) as JsonObject
+                : [];
+            if (root is null)
+            {
+                _logger.Log("MCP-CONFIG-ERROR", $"Cannot add default GitHub MCP server because {configPath} is not a JSON object.");
+                return;
+            }
+
+            var servers = root["mcpServers"] as JsonObject;
+            if (servers is null)
+            {
+                servers = [];
+                root["mcpServers"] = servers;
+            }
+
+            if (servers.ContainsKey("github-mcp-server"))
+            {
+                return;
+            }
+
+            servers["github-mcp-server"] = CreateDefaultGitHubMcpServerNode();
+            Directory.CreateDirectory(Path.GetDirectoryName(configPath)!);
+            await File.WriteAllTextAsync(
+                configPath,
+                root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }),
+                cancellationToken);
+            _logger.Log("MCP-CONFIG", $"Added default GitHub MCP server to {configPath}");
+        }
+        catch (Exception ex)
+        {
+            _logger.Log("MCP-CONFIG-ERROR", $"Failed to add default GitHub MCP server to {configPath}: {ex.Message}");
+        }
+    }
+
+    private static JsonObject CreateDefaultGitHubMcpServerNode()
+    {
+        return new JsonObject
+        {
+            ["type"] = "http",
+            ["url"] = "https://api.githubcopilot.com/mcp/readonly",
+            ["headers"] = new JsonObject
+            {
+                ["Authorization"] = "Bearer $GITHUB_TOKEN"
+            },
+            ["tools"] = new JsonArray("*")
+        };
     }
 
     private async Task LoadBuiltinMcpServersAsync(CopilotClient client, CancellationToken cancellationToken)
@@ -291,7 +353,10 @@ public sealed class CopilotChatService : IAsyncDisposable
         await LoadMcpConfigJsonAsync(client, json, "(built-in)", cancellationToken);
     }
 
-    private async Task LoadMcpConfigFileAsync(CopilotClient client, string configPath, CancellationToken cancellationToken)
+    private async Task LoadMcpConfigFileAsync(
+        CopilotClient client,
+        string configPath,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -304,7 +369,11 @@ public sealed class CopilotChatService : IAsyncDisposable
         }
     }
 
-    private async Task LoadMcpConfigJsonAsync(CopilotClient client, string json, string source, CancellationToken cancellationToken)
+    private async Task LoadMcpConfigJsonAsync(
+        CopilotClient client,
+        string json,
+        string source,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -323,7 +392,10 @@ public sealed class CopilotChatService : IAsyncDisposable
                     McpServerConfig serverConfig;
                     if (cfg.TryGetProperty("url", out var urlProp))
                     {
-                        var httpCfg = new McpHttpServerConfig { Url = urlProp.GetString() ?? "" };
+                        var httpCfg = new McpHttpServerConfig
+                        {
+                            Url = urlProp.GetString() ?? ""
+                        };
                         if (cfg.TryGetProperty("headers", out var headersProp))
                             httpCfg.Headers = headersProp.EnumerateObject()
                                 .ToDictionary(h => h.Name, h => h.Value.GetString() ?? "");
@@ -344,10 +416,14 @@ public sealed class CopilotChatService : IAsyncDisposable
                     {
                         var stdio = new McpStdioServerConfig
                         {
-                            Command = cfg.TryGetProperty("command", out var cmd) ? cmd.GetString() ?? "" : "",
+                            Command = cfg.TryGetProperty("command", out var cmd)
+                                ? cmd.GetString() ?? ""
+                                : "",
                         };
                         if (cfg.TryGetProperty("args", out var argsProp))
-                            stdio.Args = argsProp.EnumerateArray().Select(a => a.GetString() ?? "").ToList();
+                            stdio.Args = argsProp.EnumerateArray()
+                                .Select(a => a.GetString() ?? "")
+                                .ToList();
                         if (cfg.TryGetProperty("env", out var envProp))
                             stdio.Env = envProp.EnumerateObject()
                                 .ToDictionary(e => e.Name, e => e.Value.GetString() ?? "");
@@ -367,9 +443,15 @@ public sealed class CopilotChatService : IAsyncDisposable
                         serverConfig = stdio;
                     }
 
-                    await UpsertMcpServerAsync(client, name, serverConfig, cancellationToken);
+                    if (_mcpServerConfigs.ContainsKey(name))
+                    {
+                        _logger.Log("MCP-CONFIG", $"Skipped MCP server '{name}' from {source} because it was already loaded.");
+                        continue;
+                    }
+
                     _mcpServerConfigs[name] = serverConfig;
-                    _logger.Log("MCP-CONFIG", $"Registered MCP server '{name}' from {source}");
+                    await TryAddMcpServerAsync(client, name, serverConfig, source, cancellationToken);
+                    _logger.Log("MCP-CONFIG", $"Loaded MCP server '{name}' from {source}");
                     UpsertMcpServerSnapshot(name, "registered");
                 }
                 catch (Exception ex)
@@ -385,7 +467,12 @@ public sealed class CopilotChatService : IAsyncDisposable
         }
     }
 
-    private async Task UpsertMcpServerAsync(CopilotClient client, string name, object config, CancellationToken cancellationToken)
+    private async Task TryAddMcpServerAsync(
+        CopilotClient client,
+        string name,
+        object config,
+        string source,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -393,7 +480,7 @@ public sealed class CopilotChatService : IAsyncDisposable
         }
         catch (Exception ex) when (ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
         {
-            await client.Rpc.Mcp.Config.UpdateAsync(name, config, cancellationToken);
+            _logger.Log("MCP-CONFIG", $"Did not replace MCP server '{name}' from {source} because it is already registered in the SDK.");
         }
     }
 
@@ -541,6 +628,7 @@ public sealed class CopilotChatService : IAsyncDisposable
     {
         // GitHub API hosts used by the builtin github-mcp-server.
         // These are implicitly trusted when the user is already authenticated via GitHub token.
+        "api.githubcopilot.com",
         "api.github.com",
         "github.com",
         "uploads.github.com",
@@ -1274,7 +1362,12 @@ public sealed class CopilotChatService : IAsyncDisposable
 
     private void SetPending(ChatSessionView chat, bool isPending)
     {
-        App.Current.Dispatcher.Invoke(() =>
+        if (!isPending)
+        {
+            FlushChatUpdatesOnDispatcher();
+        }
+
+        App.Current.Dispatcher.BeginInvoke(() =>
         {
             chat.IsPending = isPending;
             if (!isPending)
@@ -1336,40 +1429,102 @@ public sealed class CopilotChatService : IAsyncDisposable
             quota?.ResetDate);
     }
 
-    private static void AddOrUpdate(ChatSessionView chat, ChatMessageKind kind, string? content, string key, bool append = false)
+    private void AddOrUpdate(ChatSessionView chat, ChatMessageKind kind, string? content, string key, bool append = false)
     {
         if (string.IsNullOrEmpty(content))
         {
             return;
         }
 
-        App.Current.Dispatcher.Invoke(() =>
+        _pendingChatUpdates.Enqueue(ChatUpdate.Upsert(chat, kind, content, key, append));
+        ScheduleChatUpdateFlush(ChatUpdateThrottleDelay);
+    }
+
+    private void RemoveMessage(ChatSessionView chat, string key)
+    {
+        _pendingChatUpdates.Enqueue(ChatUpdate.Delete(chat, key));
+        ScheduleChatUpdateFlush(TimeSpan.Zero);
+    }
+
+    private void ScheduleChatUpdateFlush(TimeSpan delay)
+    {
+        if (Interlocked.Exchange(ref _chatUpdateFlushScheduled, 1) == 1)
         {
-            var existing = chat.Messages.FirstOrDefault(m => m.Id == key);
-            if (existing is null)
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            if (delay > TimeSpan.Zero)
             {
-                chat.Messages.Add(new ChatMessage { Id = key, Kind = kind, Content = content });
+                await Task.Delay(delay);
             }
-            else
-            {
-                var index = chat.Messages.IndexOf(existing);
-                existing.Content = append ? existing.Content + content : content;
-                chat.Messages.RemoveAt(index);
-                chat.Messages.Insert(index, existing);
-            }
+
+            FlushChatUpdatesOnDispatcher();
         });
     }
 
-    private static void RemoveMessage(ChatSessionView chat, string key)
+    private void FlushChatUpdatesOnDispatcher()
     {
-        App.Current.Dispatcher.Invoke(() =>
+        App.Current.Dispatcher.BeginInvoke(FlushPendingChatUpdatesOnUi);
+    }
+
+    private void FlushPendingChatUpdatesOnUi()
+    {
+        while (_pendingChatUpdates.TryDequeue(out var update))
         {
-            var existing = chat.Messages.FirstOrDefault(m => m.Id == key);
-            if (existing is not null)
+            if (update.IsRemove)
             {
-                chat.Messages.Remove(existing);
+                var existing = update.Chat.Messages.FirstOrDefault(m => m.Id == update.Key);
+                if (existing is not null)
+                {
+                    update.Chat.Messages.Remove(existing);
+                }
+
+                continue;
             }
-        });
+
+            var existingMessage = update.Chat.Messages.FirstOrDefault(m => m.Id == update.Key);
+            if (existingMessage is null)
+            {
+                update.Chat.Messages.Add(new ChatMessage
+                {
+                    Id = update.Key,
+                    Kind = update.Kind,
+                    Content = update.Content
+                });
+            }
+            else
+            {
+                var index = update.Chat.Messages.IndexOf(existingMessage);
+                existingMessage.Content = update.Append
+                    ? existingMessage.Content + update.Content
+                    : update.Content;
+                update.Chat.Messages.RemoveAt(index);
+                update.Chat.Messages.Insert(index, existingMessage);
+            }
+        }
+
+        Interlocked.Exchange(ref _chatUpdateFlushScheduled, 0);
+        if (!_pendingChatUpdates.IsEmpty)
+        {
+            ScheduleChatUpdateFlush(ChatUpdateThrottleDelay);
+        }
+    }
+
+    private sealed record ChatUpdate(
+        ChatSessionView Chat,
+        ChatMessageKind Kind,
+        string Content,
+        string Key,
+        bool Append,
+        bool IsRemove)
+    {
+        public static ChatUpdate Upsert(ChatSessionView chat, ChatMessageKind kind, string content, string key, bool append)
+            => new(chat, kind, content, key, append, false);
+
+        public static ChatUpdate Delete(ChatSessionView chat, string key)
+            => new(chat, ChatMessageKind.System, "", key, false, true);
     }
 
     private void UpsertMcpServerSnapshot(string name, string status, IReadOnlyList<string>? tools = null)

@@ -35,12 +35,17 @@ public partial class MainWindow : Window
     private bool _showDetailMessages;
     private bool _isRestoringChats;
     private System.Windows.Threading.DispatcherTimer? _themeTimer;
+    private readonly object _openChatSaveGate = new();
+    private readonly object _openChatWriteGate = new();
+    private CancellationTokenSource? _pendingOpenChatSave;
+    private Task _lastOpenChatSaveTask = Task.CompletedTask;
+    private static readonly TimeSpan OpenChatSaveIdleDelay = TimeSpan.FromMilliseconds(900);
 
     public MainWindow()
     {
         InitializeComponent();
         LoadWindowIcon();
-        _settings = _settingsStore.Load();
+        _settings = LoadSettingsForStartup();
         _debugLogger.IsEnabled = _settings.EnableDebugLogging;
         _copilot = new CopilotChatService(_settingsStore, PromptForPermissionAsync, PromptForUserInputAsync, _debugLogger);
         _copilot.UsageUpdated += Copilot_UsageUpdated;
@@ -51,6 +56,45 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
         Closing += MainWindow_Closing;
         Closed += MainWindow_Closed;
+    }
+
+    private AppSettings LoadSettingsForStartup()
+    {
+        if (!_settingsStore.RequiresSettingsPassword())
+        {
+            return _settingsStore.Load();
+        }
+
+        var passwordWindow = new SettingsPasswordWindow();
+        if (passwordWindow.ShowDialog() == true)
+        {
+            try
+            {
+                _settingsStore.SetSettingsPassword(passwordWindow.Password);
+                return _settingsStore.Load();
+            }
+            catch (SettingsDecryptionException)
+            {
+                MessageBox.Show(
+                    this,
+                    "The settings password was incorrect. The application will start with blank settings for this session.",
+                    "Settings password",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+        else
+        {
+            MessageBox.Show(
+                this,
+                "Settings were not unlocked. The application will start with blank settings for this session.",
+                "Settings password",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+
+        _settingsStore.UseBlankSettingsForSession();
+        return new AppSettings();
     }
 
     private void LoadWindowIcon()
@@ -68,6 +112,7 @@ public partial class MainWindow : Window
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         ApplyThemeFromMode();
+        UpdateMemoryCheckBox();
         await RefreshModelsAsync(showErrorDialog: false, allowFallback: true);
         await RestoreOpenChatsAsync();
     }
@@ -148,6 +193,7 @@ public partial class MainWindow : Window
             _settings = window.Settings;
             _settingsStore.Save(_settings);
             _debugLogger.IsEnabled = _settings.EnableDebugLogging;
+            UpdateMemoryCheckBox();
             ApplyThemeFromMode();
         }
     }
@@ -159,6 +205,7 @@ public partial class MainWindow : Window
         {
             if (CurrentChat is { } chat)
             {
+                SetTabUnreadState(chat, false);
                 _ = EnsureSelectedChatReadyAsync(chat);
             }
             SaveOpenChats();
@@ -208,6 +255,7 @@ public partial class MainWindow : Window
         chat.Messages.Add(new ChatMessage { Kind = ChatMessageKind.User, Content = userMessageContent });
         RenderChat(chat);
         chat.IsPending = true;
+        SetTabBusyIndicator(chat, true);
         GetTabContent(chat)?.SetState(true, false);
 
         try
@@ -219,6 +267,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             chat.IsPending = false;
+            SetTabBusyIndicator(chat, false);
             chat.Messages.Add(new ChatMessage { Kind = ChatMessageKind.Error, Content = ex.Message });
             RenderChat(chat);
             GetTabContent(chat)?.SetState(false, chat.IsSessionMissing);
@@ -244,6 +293,7 @@ public partial class MainWindow : Window
         finally
         {
             chat.IsPending = false;
+            SetTabBusyIndicator(chat, false);
             GetTabContent(chat)?.SetState(false, chat.IsSessionMissing);
             SaveOpenChats();
         }
@@ -265,7 +315,7 @@ public partial class MainWindow : Window
 
     private void LocalShortcut_StatusChanged(ChatSessionView chat, string? status)
     {
-        Dispatcher.Invoke(() =>
+        Dispatcher.BeginInvoke(() =>
         {
             if (status is null)
             {
@@ -355,15 +405,16 @@ public partial class MainWindow : Window
 
     private void Copilot_UsageUpdated(CopilotUsageStatus usage)
     {
-        Dispatcher.Invoke(() => UsageStatusTextBlock.Text = "Usage: " + usage.ToStatusText());
+        Dispatcher.BeginInvoke(() => UsageStatusTextBlock.Text = "Usage: " + usage.ToStatusText());
     }
 
     private void Copilot_StatusChanged(ChatSessionView chat, string? status)
     {
-        Dispatcher.Invoke(() =>
+        Dispatcher.BeginInvoke(() =>
         {
             chat.LastStatus = status;
             GetTabContent(chat)?.SetStatus(status);
+            SetTabBusyIndicator(chat, chat.IsPending);
         });
     }
 
@@ -374,12 +425,14 @@ public partial class MainWindow : Window
 
     private void Copilot_SessionPendingChanged(ChatSessionView chat, bool isPending)
     {
-        Dispatcher.Invoke(() =>
+        Dispatcher.BeginInvoke(() =>
         {
             chat.IsPending = isPending;
+            SetTabBusyIndicator(chat, isPending);
             GetTabContent(chat)?.SetState(isPending, chat.IsSessionMissing);
             if (!isPending)
             {
+                SetTabUnreadState(chat, !ReferenceEquals(chat, CurrentChat));
                 RenderChat(chat);
                 SaveOpenChats();
             }
@@ -659,6 +712,7 @@ public partial class MainWindow : Window
     {
         chat.IsSessionMissing = true;
         chat.IsPending = false;
+        SetTabBusyIndicator(chat, false);
         chat.LastStatus = null;
         chat.Messages.Add(new ChatMessage
         {
@@ -677,18 +731,118 @@ public partial class MainWindow : Window
             return;
         }
 
+        var state = CaptureOpenChatState();
+        QueueOpenChatSave(state, force, reason);
+    }
+
+    private PersistedChatState CaptureOpenChatState()
+    {
         var sessions = ChatTabs.Items.OfType<TabItem>()
             .Select(tab => tab.Tag as ChatSessionView)
             .Where(chat => chat is not null)
             .Select(chat => ToPersistedSession(chat!))
             .ToList();
-        var state = new PersistedChatState
+
+        return new PersistedChatState
         {
             Sessions = sessions,
             SelectedSessionId = CurrentChat?.CopilotSessionId
         };
+    }
 
-        _chatSessionStore.Save(state);
+    private void QueueOpenChatSave(PersistedChatState state, bool force, string reason)
+    {
+        CancellationTokenSource? previous;
+        lock (_openChatSaveGate)
+        {
+            previous = _pendingOpenChatSave;
+            _pendingOpenChatSave = force ? null : new CancellationTokenSource();
+        }
+
+        previous?.Cancel();
+        previous?.Dispose();
+
+        if (force)
+        {
+            SaveOpenChatStateSynchronously(state, reason, force);
+            lock (_openChatSaveGate)
+            {
+                _lastOpenChatSaveTask = Task.CompletedTask;
+            }
+            return;
+        }
+
+        CancellationTokenSource current;
+        lock (_openChatSaveGate)
+        {
+            current = _pendingOpenChatSave!;
+        }
+
+        var saveTask = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(OpenChatSaveIdleDelay, current.Token);
+                await SaveOpenChatStateInBackgroundAsync(state, reason, force, current.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _debugLogger.Log("CHAT-SESSION-SAVE", $"Debounced pending save | reason={reason}");
+            }
+            catch (Exception ex)
+            {
+                _debugLogger.Log("CHAT-SESSION-SAVE-ERROR", $"reason={reason} force={force} path={_chatSessionStore.StatePath}\n{ex}");
+            }
+            finally
+            {
+                lock (_openChatSaveGate)
+                {
+                    if (ReferenceEquals(_pendingOpenChatSave, current))
+                    {
+                        _pendingOpenChatSave = null;
+                    }
+                }
+
+                current.Dispose();
+            }
+        }, CancellationToken.None);
+
+        lock (_openChatSaveGate)
+        {
+            _lastOpenChatSaveTask = saveTask;
+        }
+    }
+
+    private async Task SaveOpenChatStateInBackgroundAsync(
+        PersistedChatState state,
+        string reason,
+        bool force,
+        CancellationToken cancellationToken)
+    {
+        await Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_openChatWriteGate)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _chatSessionStore.Save(state);
+            }
+        }, cancellationToken);
+        LogOpenChatSave(state, reason, force);
+    }
+
+    private void SaveOpenChatStateSynchronously(PersistedChatState state, string reason, bool force)
+    {
+        lock (_openChatWriteGate)
+        {
+            _chatSessionStore.Save(state);
+        }
+
+        LogOpenChatSave(state, reason, force);
+    }
+
+    private void LogOpenChatSave(PersistedChatState state, string reason, bool force)
+    {
         _debugLogger.Log(
             "CHAT-SESSION-SAVE",
             $"Saved {state.Sessions.Count} sessions, {state.Sessions.Sum(session => session.Messages.Count)} messages | reason={reason} force={force} path={_chatSessionStore.StatePath}");
@@ -727,15 +881,31 @@ public partial class MainWindow : Window
     {
         var titleBlock = new TextBlock
         {
+            Name = "TabTitleTextBlock",
             Text = title,
-            MinWidth = 128,
-            MaxWidth = 178,
+            FontWeight = tab.Tag is ChatSessionView { HasUnreadResponse: true } ? FontWeights.Bold : FontWeights.Normal,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(titleBlock, 0);
+
+        var unreadIndicator = new Ellipse
+        {
+            Name = "TabUnreadIndicator",
+            Width = 7,
+            Height = 7,
+            Margin = new Thickness(0, 0, 7, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Fill = (Brush)FindResource("AccentBrush"),
+            Visibility = tab.Tag is ChatSessionView { HasUnreadResponse: true }
+                ? Visibility.Visible
+                : Visibility.Collapsed,
+            ToolTip = "Unread response"
         };
 
         var closeButton = new Button
         {
+            Name = "TabCloseButton",
             Content = "x",
             Style = (Style)FindResource("CloseTabButton"),
             ToolTip = "Close session"
@@ -746,20 +916,199 @@ public partial class MainWindow : Window
             _ = CloseTabAsync(tab);
         };
 
-        tab.Header = new DockPanel
+        var busySpinner = CreateTabBusySpinner();
+        var typingIndicator = CreateTabTypingIndicator();
+        var isPending = tab.Tag is ChatSessionView { IsPending: true };
+        var isTyping = tab.Tag is ChatSessionView chat && IsTypingStatus(chat.LastStatus);
+        busySpinner.Visibility = isPending && !isTyping ? Visibility.Visible : Visibility.Collapsed;
+        typingIndicator.Visibility = isPending && isTyping ? Visibility.Visible : Visibility.Collapsed;
+        closeButton.Visibility = isPending ? Visibility.Collapsed : Visibility.Visible;
+        closeButton.IsEnabled = !isPending;
+
+        var closeSlot = new Grid
         {
-            LastChildFill = false,
-            ToolTip = "Double-click to rename",
-            MinWidth = 172,
+            Name = "TabCloseSlot",
+            Width = 22,
+            Height = 22,
+            VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
-                titleBlock,
+                typingIndicator,
+                busySpinner,
                 closeButton
             }
         };
+        Grid.SetColumn(unreadIndicator, 1);
+        Grid.SetColumn(closeSlot, 2);
+
+        var header = new Grid
+        {
+            ToolTip = "Double-click to rename",
+            Width = 184,
+            Children =
+            {
+                titleBlock,
+                unreadIndicator,
+                closeSlot
+            }
+        };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        tab.Header = header;
         tab.MouseDoubleClick -= Tab_MouseDoubleClick;
         tab.MouseDoubleClick += Tab_MouseDoubleClick;
         tab.ContextMenu = BuildTabContextMenu(tab);
+    }
+
+    private FrameworkElement CreateTabBusySpinner()
+    {
+        var rotate = new RotateTransform(0, 9, 9);
+        var spinner = new Path
+        {
+            Name = "TabBusySpinner",
+            Width = 18,
+            Height = 18,
+            Margin = new Thickness(2),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Data = Geometry.Parse("M 9,1 A 8,8 0 1 1 3.34,3.34"),
+            Stroke = (Brush)FindResource("AccentBrush"),
+            StrokeThickness = 2,
+            StrokeStartLineCap = PenLineCap.Round,
+            StrokeEndLineCap = PenLineCap.Round,
+            RenderTransform = rotate,
+            ToolTip = "Session is busy"
+        };
+
+        rotate.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation
+        {
+            From = 0,
+            To = 360,
+            Duration = TimeSpan.FromMilliseconds(850),
+            RepeatBehavior = RepeatBehavior.Forever
+        });
+        return spinner;
+    }
+
+    private StackPanel CreateTabTypingIndicator()
+    {
+        var panel = new StackPanel
+        {
+            Name = "TabTypingIndicator",
+            Orientation = Orientation.Horizontal,
+            Width = 22,
+            Height = 22,
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            ToolTip = "Writing response",
+            Visibility = Visibility.Collapsed
+        };
+
+        for (var i = 0; i < 3; i++)
+        {
+            var dot = new Ellipse
+            {
+                Width = 4,
+                Height = 4,
+                Margin = new Thickness(i == 0 ? 2 : 1.5, 0, 1.5, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Fill = (Brush)FindResource("AccentBrush"),
+                Opacity = 0.35
+            };
+
+            dot.BeginAnimation(OpacityProperty, new DoubleAnimation
+            {
+                From = 0.35,
+                To = 1,
+                Duration = TimeSpan.FromMilliseconds(420),
+                AutoReverse = true,
+                BeginTime = TimeSpan.FromMilliseconds(i * 140),
+                RepeatBehavior = RepeatBehavior.Forever
+            });
+            panel.Children.Add(dot);
+        }
+
+        return panel;
+    }
+
+    private static bool IsTypingStatus(string? status)
+    {
+        return status?.Contains("Writing response", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private void SetTabBusyIndicator(ChatSessionView chat, bool isBusy)
+    {
+        var tab = ChatTabs.Items
+            .OfType<TabItem>()
+            .FirstOrDefault(item => ReferenceEquals(item.Tag, chat));
+        if (tab?.Header is not Panel header)
+        {
+            return;
+        }
+
+        var closeSlot = header.Children
+            .OfType<Grid>()
+            .FirstOrDefault(grid => grid.Name == "TabCloseSlot");
+        var typingIndicator = closeSlot?.Children
+            .OfType<StackPanel>()
+            .FirstOrDefault(panel => panel.Name == "TabTypingIndicator");
+        var spinner = closeSlot?.Children
+            .OfType<Path>()
+            .FirstOrDefault(path => path.Name == "TabBusySpinner");
+        var closeButton = closeSlot?.Children
+            .OfType<Button>()
+            .FirstOrDefault(button => button.Name == "TabCloseButton");
+        var isTyping = isBusy && IsTypingStatus(chat.LastStatus);
+
+        if (typingIndicator is not null)
+        {
+            typingIndicator.Visibility = isTyping ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (spinner is not null)
+        {
+            spinner.Visibility = isBusy && !isTyping ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (closeButton is not null)
+        {
+            closeButton.Visibility = isBusy ? Visibility.Collapsed : Visibility.Visible;
+            closeButton.IsEnabled = !isBusy;
+        }
+
+        if (tab.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault(item => item.Name == "CloseTabMenuItem") is { } closeItem)
+        {
+            closeItem.IsEnabled = !isBusy;
+        }
+    }
+
+    private void SetTabUnreadState(ChatSessionView chat, bool hasUnreadResponse)
+    {
+        chat.HasUnreadResponse = hasUnreadResponse;
+        var tab = ChatTabs.Items
+            .OfType<TabItem>()
+            .FirstOrDefault(item => ReferenceEquals(item.Tag, chat));
+        if (tab?.Header is not Panel header)
+        {
+            return;
+        }
+
+        var title = header.Children
+            .OfType<TextBlock>()
+            .FirstOrDefault(text => text.Name == "TabTitleTextBlock");
+        if (title is not null)
+        {
+            title.FontWeight = hasUnreadResponse ? FontWeights.Bold : FontWeights.Normal;
+        }
+
+        var indicator = header.Children
+            .OfType<Ellipse>()
+            .FirstOrDefault(ellipse => ellipse.Name == "TabUnreadIndicator");
+        if (indicator is not null)
+        {
+            indicator.Visibility = hasUnreadResponse ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private ContextMenu BuildTabContextMenu(TabItem tab)
@@ -769,6 +1118,8 @@ public partial class MainWindow : Window
         renameItem.Click += (_, _) => RenameTab(tab);
         menu.Items.Add(renameItem);
         var closeItem = new MenuItem { Header = "Close" };
+        closeItem.Name = "CloseTabMenuItem";
+        closeItem.IsEnabled = tab.Tag is not ChatSessionView { IsPending: true };
         closeItem.Click += (_, _) => _ = CloseTabAsync(tab);
         menu.Items.Add(closeItem);
         return menu;
@@ -776,6 +1127,11 @@ public partial class MainWindow : Window
 
     private async Task CloseTabAsync(TabItem tab)
     {
+        if (tab.Tag is ChatSessionView { IsPending: true })
+        {
+            return;
+        }
+
         // Remove from UI immediately — avoids showing an empty tab while the session closes
         ChatTabs.Items.Remove(tab);
 
@@ -834,7 +1190,23 @@ public partial class MainWindow : Window
 
     private void Browser_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        var id = TryReadOpenMessageId(e);
+        var message = TryReadBrowserMessage(e);
+        if (message is null)
+        {
+            return;
+        }
+
+        if (message.Type.Equals("openFrame", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(message.Html))
+            {
+                new IframePreviewWindow(message.Html, _isDarkTheme) { Owner = this }.Show();
+            }
+
+            return;
+        }
+
+        var id = message.Id;
         if (string.IsNullOrWhiteSpace(id))
         {
             return;
@@ -843,34 +1215,36 @@ public partial class MainWindow : Window
         var sourceChat = ChatTabs.Items.OfType<TabItem>()
             .Select(tab => tab.Tag as ChatSessionView)
             .FirstOrDefault(chat => ReferenceEquals(chat?.Browser.CoreWebView2, sender));
-        var message = (sourceChat ?? CurrentChat)?.Messages.FirstOrDefault(m => m.Id == id);
-        if (message is not null)
+        var chatMessage = (sourceChat ?? CurrentChat)?.Messages.FirstOrDefault(m => m.Id == id);
+        if (chatMessage is not null)
         {
-            new ResponseWindow(_htmlRenderer, message, _isDarkTheme) { Owner = this }.Show();
+            new ResponseWindow(_htmlRenderer, chatMessage, _isDarkTheme) { Owner = this }.Show();
         }
     }
 
-    private static string? TryReadOpenMessageId(CoreWebView2WebMessageReceivedEventArgs e)
+    private static BrowserBridgeMessage? TryReadBrowserMessage(CoreWebView2WebMessageReceivedEventArgs e)
     {
         try
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root = doc.RootElement;
-            if (root.ValueKind == JsonValueKind.Object &&
-                root.TryGetProperty("type", out var type) &&
-                type.GetString()?.Equals("open", StringComparison.OrdinalIgnoreCase) == true &&
-                root.TryGetProperty("id", out var id))
+            if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("type", out var type))
             {
-                return id.GetString();
+                var typeValue = type.GetString() ?? "";
+                var id = root.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                var html = root.TryGetProperty("html", out var htmlProp) ? htmlProp.GetString() : null;
+                return new BrowserBridgeMessage(typeValue, id, html);
             }
 
-            return root.ValueKind == JsonValueKind.String ? root.GetString() : null;
+            return root.ValueKind == JsonValueKind.String
+                ? new BrowserBridgeMessage("open", root.GetString(), null)
+                : null;
         }
         catch
         {
             try
             {
-                return e.TryGetWebMessageAsString();
+                return new BrowserBridgeMessage("open", e.TryGetWebMessageAsString(), null);
             }
             catch
             {
@@ -878,6 +1252,8 @@ public partial class MainWindow : Window
             }
         }
     }
+
+    private sealed record BrowserBridgeMessage(string Type, string? Id, string? Html);
 
     private Task<PermissionPromptDecision> PromptForPermissionAsync(PermissionPrompt prompt)
     {
@@ -1169,6 +1545,27 @@ public partial class MainWindow : Window
     {
         _showDetailMessages = ShowDetailsCheckBox.IsChecked == true;
         RenderCurrentChat();
+    }
+
+    private void MemoryCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        var enabled = MemoryCheckBox.IsChecked == true;
+        _settings.Permissions.AllowMemoryByDefault = enabled;
+        _settingsStore.Save(_settings);
+        UpdateMemoryCheckBox();
+
+        if (CurrentChat is { } chat)
+        {
+            GetTabContent(chat)?.SetStatus(enabled ? "Memory on" : "Memory off");
+        }
+    }
+
+    private void UpdateMemoryCheckBox()
+    {
+        MemoryCheckBox.IsChecked = _settings.Permissions.AllowMemoryByDefault;
+        MemoryCheckBox.ToolTip = _settings.Permissions.AllowMemoryByDefault
+            ? "Copilot memory across sessions is on"
+            : "Copilot memory across sessions is off";
     }
 
     private void ApplyThemeFromMode()
