@@ -39,6 +39,9 @@ public sealed class HtmlRenderer
         ["--tool-head"]   = dark ? "#1E1040" : "#F5F3FF",
         ["--tool-avatar"] = dark ? "#6D28D9" : "#8B5CF6",
         ["--tool-label"]  = dark ? "#A78BFA" : "#5B21B6",
+        ["--prompt-head"]  = dark ? "#2A1A04" : "#FFF7ED",
+        ["--prompt-avatar"] = dark ? "#B45309" : "#F97316",
+        ["--prompt-label"] = dark ? "#FDBA74" : "#C2410C",
         ["--err-head"]    = dark ? "#2D0E0E" : "#FFF5F5",
         ["--err-avatar"]  = dark ? "#9B1C1C" : "#EF4444",
         ["--err-label"]   = dark ? "#FCA5A5" : "#991B1B",
@@ -125,6 +128,19 @@ main.streaming .open-btn { pointer-events:none; color:var(--icon-dim); opacity:.
 .live-frame.ready .spinner-wrap { display:none; }
 .live-frame.ready iframe.live-iframe { visibility:visible; }
 @keyframes spin { to { transform:rotate(360deg); } }
+.prompt-card { display:flex; flex-direction:column; gap:8px; }
+.prompt-question { white-space:pre-wrap; overflow-wrap:anywhere; }
+.prompt-details { color:var(--muted); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.prompt-actions { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.prompt-actions.choice-list { flex-direction:column; align-items:stretch; }
+.prompt-actions.choice-list .prompt-btn { width:100%; text-align:left; line-height:1.25; }
+.prompt-btn { border:1px solid var(--border); border-radius:6px; background:var(--btn-bg); color:var(--text); padding:6px 10px; font:600 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; cursor:pointer; }
+.prompt-btn.primary { background:var(--link); border-color:var(--link); color:#fff; }
+.prompt-btn.danger { color:var(--err-label); }
+.prompt-btn:disabled, .prompt-input:disabled { opacity:.55; cursor:not-allowed; }
+.prompt-input-row { display:flex; gap:6px; align-items:center; }
+.prompt-input { min-width:220px; flex:1; border:1px solid var(--border); border-radius:6px; background:var(--card); color:var(--text); padding:7px 9px; font:13px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.prompt-answer { color:var(--muted); font-size:12px; }
 .frame-body > :first-child { margin-top:0; }
 .frame-body > :last-child { margin-bottom:0; }
 .user .head, .user details > summary.head { background:var(--user-head); }
@@ -139,6 +155,9 @@ main.streaming .open-btn { pointer-events:none; color:var(--icon-dim); opacity:.
 .tool .head, .tool details > summary.head, .intent .head, .intent details > summary.head { background:var(--tool-head); }
 .tool .avatar, .intent .avatar { background:var(--tool-avatar); color:#FFF; }
 .tool .kind-label, .intent .kind-label { color:var(--tool-label); }
+.prompt .head, .prompt details > summary.head { background:var(--prompt-head); }
+.prompt .avatar { background:var(--prompt-avatar); color:#FFF; }
+.prompt .kind-label { color:var(--prompt-label); }
 .error .head, .error details > summary.head { background:var(--err-head); }
 .error .avatar { background:var(--err-avatar); color:#FFF; }
 .error .kind-label { color:var(--err-label); }
@@ -175,6 +194,42 @@ document.addEventListener('click', e => {
   if (!htmlBase64 && !html) return;
   chrome.webview.postMessage({ type: 'openFrame', htmlBase64, html });
 });
+document.addEventListener('click', e => {
+  const button = e.target.closest('[data-prompt-submit]');
+  if (!button || button.disabled) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const article = button.closest('article[data-mid]');
+  if (!article) return;
+  const input = article.querySelector('[data-prompt-input]');
+  const mode = button.dataset.promptMode || 'choice';
+  const value = mode === 'freeform' ? (input?.value || '') : (button.dataset.promptValue || '');
+  chrome.webview.postMessage({ type: 'promptResponse', id: article.dataset.mid, value, mode });
+});
+document.addEventListener('toggle', e => {
+  const details = e.target;
+  if (!(details instanceof HTMLDetailsElement) || !details.open) return;
+  const article = details.closest('article.msg');
+  if (!article || !article.classList.contains('user') || details.parentElement !== article) return;
+
+  const responses = Array.from(details.children).find(child => child.classList?.contains('turn-responses'));
+  if (!responses) return;
+
+  const nestedArticles = Array.from(responses.children)
+    .filter(child => child.classList?.contains('msg'));
+  if (nestedArticles.length === 0) return;
+  const allCollapsed = nestedArticles.every(item => {
+    const nestedDetails = Array.from(item.children).find(child => child instanceof HTMLDetailsElement);
+    return !nestedDetails?.open;
+  });
+  const lastResponse = nestedArticles.findLast(item => item.classList.contains('assistant'));
+  const lastResponseDetails = lastResponse
+    ? Array.from(lastResponse.children).find(child => child instanceof HTMLDetailsElement)
+    : null;
+  if (allCollapsed && lastResponseDetails) {
+    lastResponseDetails.open = true;
+  }
+}, true);
 </script>
 </body>
 </html>
@@ -239,6 +294,7 @@ document.addEventListener('click', e => {
             ChatMessageKind.Reasoning => ("R",  "Reasoning"),
             ChatMessageKind.Tool      => ("⚙",  "Tool"),
             ChatMessageKind.Intent    => ("→",  "Intent"),
+            ChatMessageKind.Prompt    => ("?",  "Input Needed"),
             ChatMessageKind.Error     => ("!",  "Error"),
             _                         => ("·",  message.Kind.ToString()),
         };
@@ -250,14 +306,18 @@ document.addEventListener('click', e => {
         // All messages are collapsible.
         // User and assistant messages start open; others are collapsed by default.
         bool collapsible = true;
-        bool openByDefault = message.Kind is ChatMessageKind.User or ChatMessageKind.Assistant;
+        bool openByDefault = message.Kind is ChatMessageKind.User or ChatMessageKind.Assistant ||
+                             message.Kind is ChatMessageKind.Prompt && message.Prompt?.IsAnswered != true;
 
         if (collapsible)
         {
             var preview = WebUtility.HtmlEncode(GetPreview(message.Content));
             var openAttr = openByDefault ? " open" : "";
+            var forceClosedAttr = message.Kind is ChatMessageKind.Prompt && message.Prompt?.IsAnswered == true
+                ? " data-force-closed=\"1\""
+                : "";
             return $$"""
-<article id="msg-{{msgIdHtml}}" class="msg {{css}}" data-mid="{{msgIdHtml}}">
+<article id="msg-{{msgIdHtml}}" class="msg {{css}}" data-mid="{{msgIdHtml}}"{{forceClosedAttr}}>
   <details{{openAttr}}>
     <summary class="head">
       <span class="xicon">▶</span>
@@ -344,10 +404,65 @@ document.addEventListener('click', e => {
     {
         if (message.Kind is ChatMessageKind.User)
             return $"<p style=\"margin:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word\">{WebUtility.HtmlEncode(message.Content)}</p>";
+        if (message.Kind is ChatMessageKind.Prompt && message.Prompt is not null)
+            return RenderPromptContent(message);
         if (message.Kind is ChatMessageKind.Intent or ChatMessageKind.Tool or ChatMessageKind.Error)
             return $"<pre style=\"white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word\">{WebUtility.HtmlEncode(message.Content)}</pre>";
         var html = Markdown.ToHtml(message.Content, _markdown);
         return InjectLiveHtmlBlocks(html);
+    }
+
+    private static string RenderPromptContent(ChatMessage message)
+    {
+        var prompt = message.Prompt!;
+        var disabled = prompt.IsAnswered ? " disabled" : "";
+        var question = WebUtility.HtmlEncode(message.Content);
+        var answer = prompt.IsAnswered
+            ? $"<div class=\"prompt-answer\">Submitted: {WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(prompt.Answer) ? "(empty)" : prompt.Answer)}</div>"
+            : "";
+        var buttons = new StringBuilder();
+        var actionClass = "prompt-actions";
+
+        if (prompt.Type.Equals("permission", StringComparison.OrdinalIgnoreCase))
+        {
+            buttons.Append(RenderPromptButton("Deny", "Deny", "choice", "danger", disabled));
+            buttons.Append(RenderPromptButton("Allow once", "AllowOnce", "choice", "primary", disabled));
+            buttons.Append(RenderPromptButton("Allow for session", "AllowForSession", "choice", "", disabled));
+            buttons.Append(RenderPromptButton("Save setting", "SaveToSettings", "choice", "", disabled));
+        }
+        else
+        {
+            actionClass = "prompt-actions choice-list";
+            for (var i = 0; i < prompt.Choices.Count; i++)
+            {
+                var choice = prompt.Choices[i];
+                buttons.Append(RenderPromptButton(choice, choice, "choice", i == 0 ? "primary" : "", disabled));
+            }
+        }
+
+        var input = prompt.AllowFreeform
+            ? $$"""
+<div class="prompt-input-row">
+  <input class="prompt-input" data-prompt-input="1"{{disabled}} placeholder="Optional answer" />
+  {{RenderPromptButton("Submit", "", "freeform", prompt.Choices.Count == 0 ? "primary" : "", disabled)}}
+</div>
+"""
+            : "";
+
+        return $$"""
+<div class="prompt-card">
+  <div class="prompt-question">{{question}}</div>
+  <div class="{{actionClass}}">{{buttons}}</div>
+  {{input}}
+  {{answer}}
+</div>
+""";
+    }
+
+    private static string RenderPromptButton(string label, string value, string mode, string cssClass, string disabled)
+    {
+        var classAttr = string.IsNullOrWhiteSpace(cssClass) ? "prompt-btn" : $"prompt-btn {cssClass}";
+        return $"<button class=\"{classAttr}\" data-prompt-submit=\"1\" data-prompt-mode=\"{WebUtility.HtmlEncode(mode)}\" data-prompt-value=\"{WebUtility.HtmlEncode(value)}\"{disabled}>{WebUtility.HtmlEncode(label)}</button>";
     }
 
     // Replace fenced HTML code blocks with live iframes.
@@ -388,6 +503,8 @@ document.addEventListener('click', e => {
     {
         var inner = message.Kind is ChatMessageKind.User
             ? $"<p style=\"margin:0;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word\">{WebUtility.HtmlEncode(message.Content)}</p>"
+            : message.Kind is ChatMessageKind.Prompt && message.Prompt is not null
+                ? RenderPromptContent(message)
             : message.Kind is ChatMessageKind.Intent or ChatMessageKind.Tool or ChatMessageKind.Error
                 ? $"<pre style=\"white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word\">{WebUtility.HtmlEncode(message.Content)}</pre>"
                 : InjectLiveHtmlBlocks(Markdown.ToHtml(message.Content, _markdown));
