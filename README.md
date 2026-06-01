@@ -11,6 +11,7 @@ It provides a tabbed chat UI, session restore, model selection, reasoning effort
 - Per-tab status indicators:
   - Busy spinner while Copilot is thinking or running tools
   - Typing indicator while a response is streaming
+  - Input-required marker when Copilot is waiting for a permission, choice, or freeform response
   - Unread marker and bold title for background responses
 - Live model discovery from GitHub Copilot SDK
 - Per-chat model and reasoning effort selection for models that support it
@@ -18,12 +19,16 @@ It provides a tabbed chat UI, session restore, model selection, reasoning effort
   - Scroll to top and bottom
   - Jump to previous and next user question
 - Turn-based response display, where all responses for a prompt are grouped under the user message
+- Expanding any collapsed user turn opens the latest assistant response in that turn when the nested articles are all collapsed
 - Activity bar for transient Copilot status such as reasoning, tool execution, background agent progress, and shortcut activity
 - Tool and permission workflow:
   - Folder access rules (read/read-write)
   - Allowed tools and hosts lists
   - Saved permission rules
   - Per-command shell approvals for Copilot SDK shell permission requests
+  - Permission and user-input requests appear as interactive chat history articles instead of separate modal dialogs
+  - Choice prompts can be answered by clicking a choice; prompts that allow freeform input include an optional answer box
+  - Answered prompt articles disable their controls and collapse by default
   - Memory permission toggle through `/memory`
 - GitHub token and user secrets with show/hide controls
 - Optional settings password for AES-256 encryption of sensitive settings
@@ -34,6 +39,7 @@ It provides a tabbed chat UI, session restore, model selection, reasoning effort
 - Extra agent and skill folder configuration
 - Scheduled automation tasks with cron expressions, manual runs, run history, optional pre/post commands, Copilot steps, and file/HTTP/named-pipe handoff
 - Light, dark, and follow-the-sun theme options
+- Optional Windows tray notifications when Copilot needs user input
 - Optional debug logging
 - Markdown rendering, collapsible message cards, response pop-out windows, embedded HTML previews, and iframe preview pop-out windows
 - Custom application icon and Windows `.ico` packaging
@@ -46,6 +52,7 @@ It provides a tabbed chat UI, session restore, model selection, reasoning effort
 - Microsoft.Web.WebView2
 - Markdig
 - WPF-UI
+- Windows Forms `NotifyIcon` for tray notifications
 
 ## Prerequisites
 
@@ -82,6 +89,7 @@ Open **Settings** in the app and configure:
 - Optional default system prompt
 - Optional extra agent and skill folders
 - Preferred appearance/theme
+- Optional tray notifications for permission, choice, and feedback prompts
 - Optional debug logging
 
 Then use **Refresh Models** to fetch available models from the Copilot runtime.
@@ -108,6 +116,19 @@ Shortcuts are handled locally by the app and are not sent as chat prompts.
 - `/memory on` - approve memory permission requests automatically across sessions.
 - `/memory off` - reject memory permission requests automatically across sessions.
 - `/usage` - show the latest Copilot usage and quota snapshot (tokens, requests, remaining, reset date).
+
+## In-Chat Prompts
+
+Copilot permission requests and user-response requests are rendered directly inside the chat history as prompt articles.
+
+- Permission prompts provide Deny, Allow once, Allow for session, and Save setting actions.
+- Choice prompts can be answered by clicking a choice button.
+- Prompts that allow freeform input show an optional textbox alongside choice buttons.
+- Once answered, prompt controls are disabled, the submitted answer is recorded, and the article collapses by default.
+- The tab shows an input-required marker while a prompt is waiting.
+- If tray notifications are enabled in **Settings > Appearance**, Windows shows a tray balloon when input is required.
+
+Unanswered prompt articles restored from a previous app run are marked expired because their original SDK request is no longer active.
 
 ## Scheduled Tasks
 
@@ -198,6 +219,13 @@ Default agent and skill locations shown by the app:
 - UI slows while responses stream:
   - Chat updates and session saves are throttled, but very large HTML previews can still be expensive to render in WebView2.
   - Use the iframe pop-out button for large embedded previews.
+- Input prompt does not seem active:
+  - Look for the input-required marker on the tab.
+  - Expand the latest prompt article in that chat tab.
+  - Restored unanswered prompt articles are historical only and cannot be submitted after restart.
+- Tray notifications do not appear:
+  - Confirm **Settings > Appearance > Show tray notifications when Copilot needs a response** is enabled.
+  - Check Windows notification/focus assist settings if the tray icon is visible but balloons are suppressed.
 - Scheduled task does not run:
   - Confirm the task is enabled and the cron expression is valid.
   - Use **Run Now** to separate scheduler timing problems from command or Copilot failures.
@@ -214,6 +242,7 @@ Current project defaults (from `CopilotChatbot.csproj`):
 - `TargetFramework`: `net9.0-windows`
 - `RuntimeIdentifier`: `win-x64`
 - `UseWPF`: `true`
+- `UseWindowsForms`: `true`
 - `SelfContained`: `false`
 - `ApplicationIcon`: `Assets\AppIcon.ico`
 

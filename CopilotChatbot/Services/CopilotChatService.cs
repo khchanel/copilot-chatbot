@@ -15,8 +15,8 @@ namespace CopilotChatbot.Services;
 public sealed class CopilotChatService : IAsyncDisposable
 {
     private readonly SettingsStore _settingsStore;
-    private readonly Func<PermissionPrompt, Task<PermissionPromptDecision>> _permissionPrompt;
-    private readonly Func<UserInputPrompt, Task<UserInputPromptResult>> _userInputPrompt;
+    private readonly Func<ChatSessionView, PermissionPrompt, Task<PermissionPromptDecision>> _permissionPrompt;
+    private readonly Func<ChatSessionView, UserInputPrompt, Task<UserInputPromptResult>> _userInputPrompt;
     private readonly DebugLogger _logger;
     private CopilotClient? _client;
     private readonly ConcurrentDictionary<ChatSessionView, CopilotSession> _sessions = [];
@@ -39,8 +39,8 @@ public sealed class CopilotChatService : IAsyncDisposable
 
     public CopilotChatService(
         SettingsStore settingsStore,
-        Func<PermissionPrompt, Task<PermissionPromptDecision>> permissionPrompt,
-        Func<UserInputPrompt, Task<UserInputPromptResult>> userInputPrompt,
+        Func<ChatSessionView, PermissionPrompt, Task<PermissionPromptDecision>> permissionPrompt,
+        Func<ChatSessionView, UserInputPrompt, Task<UserInputPromptResult>> userInputPrompt,
         DebugLogger logger)
     {
         _settingsStore = settingsStore;
@@ -803,15 +803,9 @@ public sealed class CopilotChatService : IAsyncDisposable
 
         _logger.Log("ASK-USER-REQUEST", $"Thread={System.Threading.Thread.CurrentThread.IsThreadPoolThread} IsBackground={System.Threading.Thread.CurrentThread.IsBackground} ManagedId={System.Threading.Thread.CurrentThread.ManagedThreadId} | Question: {prompt.Question} | Choices: [{string.Join(", ", prompt.Choices)}] | AllowFreeform: {prompt.AllowFreeform}");
 
-        AddOrUpdate(
-            chat,
-            ChatMessageKind.System,
-            BuildUserInputPromptMessage(prompt),
-            $"ask-user-{Guid.NewGuid():N}");
-
         try
         {
-            var response = await _userInputPrompt(prompt);
+            var response = await _userInputPrompt(chat, prompt);
             _logger.Log("ASK-USER-RESPONSE", $"Answer: {(string.IsNullOrWhiteSpace(response.Answer) ? "(empty/cancelled)" : response.Answer)} | WasFreeform: {response.WasFreeform}");
 
             if (!string.IsNullOrWhiteSpace(response.Answer))
@@ -867,7 +861,7 @@ public sealed class CopilotChatService : IAsyncDisposable
         }
 
         _logger.Log("PERMISSION-REQUEST", $"Kind={prompt.Kind} Tool={prompt.ToolName} File={prompt.FileName} Host={prompt.Host} Commands={FormatCommandIdentifiers(prompt.Commands)} Command={prompt.Command}");
-        var decision = await _permissionPrompt(prompt);
+        var decision = await _permissionPrompt(chat, prompt);
         _logger.Log("PERMISSION-DECISION", $"Kind={prompt.Kind} Tool={prompt.ToolName} | Decision={decision}");
 
         if (decision == PermissionPromptDecision.AllowForSession)

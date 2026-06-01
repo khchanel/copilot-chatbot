@@ -45,6 +45,7 @@ public partial class SettingsWindow : Window
         ThemeComboBox.SelectedIndex = (int)Settings.Theme;
         ResponseBufferingCheckBox.IsChecked = Settings.EnableResponseBuffering;
         ResponseBufferIntervalSlider.Value = Math.Clamp(Settings.ResponseBufferIntervalMs <= 0 ? 1000 : Settings.ResponseBufferIntervalMs, 500, 2000);
+        TrayNotificationsCheckBox.IsChecked = Settings.EnableTrayNotifications;
         UpdateResponseBufferControls();
     }
 
@@ -326,6 +327,7 @@ public partial class SettingsWindow : Window
         Settings.DefaultSystemPrompt = string.IsNullOrWhiteSpace(SystemPromptBox.Text) ? null : SystemPromptBox.Text;
         Settings.EnableDebugLogging = EnableDebugLoggingCheckBox.IsChecked == true;
         Settings.EnableResponseBuffering = ResponseBufferingCheckBox.IsChecked == true;
+        Settings.EnableTrayNotifications = TrayNotificationsCheckBox.IsChecked == true;
         Settings.ResponseBufferIntervalMs = Math.Clamp((int)ResponseBufferIntervalSlider.Value, 500, 2000);
         Settings.Theme = (AppThemeMode)(ThemeComboBox.SelectedIndex >= 0 ? ThemeComboBox.SelectedIndex : 2);
         DialogResult = true;

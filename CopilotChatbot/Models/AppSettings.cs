@@ -15,6 +15,7 @@ public sealed class AppSettings
     public string? DefaultSystemPrompt { get; set; }
     public bool EnableDebugLogging { get; set; }
     public bool EnableResponseBuffering { get; set; } = true;
+    public bool EnableTrayNotifications { get; set; } = true;
     public int ResponseBufferIntervalMs { get; set; } = 1000;
     public string? WorkingDirectory { get; set; }
     public ObservableCollection<string> AgentDirectories { get; set; } = [];

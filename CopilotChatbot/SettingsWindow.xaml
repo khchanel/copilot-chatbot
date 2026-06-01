@@ -412,24 +412,24 @@
                             <TextBlock Text="Appearance" />
                         </StackPanel>
                     </TabItem.Header>
-                    <Border Style="{StaticResource CardBorder}" Margin="0,14,0,0">
-                        <StackPanel MaxWidth="520" HorizontalAlignment="Left">
+                    <Border Style="{StaticResource CardBorder}" Margin="0,12,0,0" Padding="14">
+                        <StackPanel MaxWidth="620" HorizontalAlignment="Left">
                             <TextBlock Text="Theme" FontWeight="SemiBold" FontSize="14"
-                                       Foreground="{DynamicResource TextBrush}" Margin="0,0,0,4" />
+                                       Foreground="{DynamicResource TextBrush}" Margin="0,0,0,2" />
                             <TextBlock Text="Controls when the light or dark colour scheme is applied."
                                        Foreground="{DynamicResource MutedTextBrush}" FontSize="12"
-                                       TextWrapping="Wrap" Margin="0,0,0,16" />
-                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,16" />
+                                       TextWrapping="Wrap" Margin="0,0,0,10" />
+                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,10" />
                             <TextBlock Text="Colour Scheme" Style="{StaticResource FieldLabel}" />
                             <ComboBox x:Name="ThemeComboBox" MaxWidth="260" HorizontalAlignment="Left" />
                             <TextBlock Text="Follow the sun uses light mode 7 am – 7 pm and dark mode outside those hours."
                                        Foreground="{DynamicResource MutedTextBrush}" FontSize="11"
-                                       TextWrapping="Wrap" Margin="0,6,0,16" />
-                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,16" />
+                                       TextWrapping="Wrap" Margin="0,4,0,10" />
+                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,10" />
                             <TextBlock Text="Response Updates" Style="{StaticResource FieldLabel}" />
                             <CheckBox x:Name="ResponseBufferingCheckBox"
                                       Content="Buffer streaming response updates"
-                                      Margin="0,0,0,10"
+                                      Margin="0,0,0,6"
                                       Checked="ResponseBufferingCheckBox_Changed"
                                       Unchecked="ResponseBufferingCheckBox_Changed" />
                             <Grid>
@@ -453,7 +453,15 @@
                             </Grid>
                             <TextBlock Text="Controls how often streaming response text is rendered. Lower values feel live; higher values reduce flicker."
                                        Foreground="{DynamicResource MutedTextBrush}" FontSize="11"
-                                       TextWrapping="Wrap" Margin="0,6,0,0" />
+                                       TextWrapping="Wrap" Margin="0,4,0,10" />
+                            <Separator Background="{DynamicResource BorderBrushModern}" Margin="0,0,0,10" />
+                            <TextBlock Text="Notifications" Style="{StaticResource FieldLabel}" />
+                            <CheckBox x:Name="TrayNotificationsCheckBox"
+                                      Content="Show tray notifications when Copilot needs a response"
+                                      Margin="0,0,0,4" />
+                            <TextBlock Text="Shows a Windows tray balloon for permission requests, tool approvals, choices, and feedback prompts."
+                                       Foreground="{DynamicResource MutedTextBrush}" FontSize="11"
+                                       TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
                 </TabItem>

@@ -1,7 +1,6 @@
 using System.Collections.Specialized;
 using System.Text;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -16,6 +15,7 @@ using Microsoft.Win32;
 using Microsoft.Web.WebView2.Core;
 using IOFile = System.IO.File;
 using IOPath = System.IO.Path;
+using WinForms = System.Windows.Forms;
 using SymbolRegular = Wpf.Ui.Controls.SymbolRegular;
 
 
@@ -35,6 +35,10 @@ public partial class MainWindow : Window
     private readonly Dictionary<ChatSessionView, ChatTabContent> _tabContents = [];
     private readonly Dictionary<ChatSessionView, Task> _browserInitializationTasks = [];
     private readonly Dictionary<ChatSessionView, Task> _sessionResumeTasks = [];
+    private readonly Dictionary<string, TaskCompletionSource<PermissionPromptDecision>> _pendingPermissionPrompts = [];
+    private readonly Dictionary<string, TaskCompletionSource<UserInputPromptResult>> _pendingUserInputPrompts = [];
+    private readonly Dictionary<string, ChatSessionView> _pendingPromptChats = [];
+    private readonly HashSet<ChatSessionView> _scrollToBottomAfterInitialRender = [];
     private readonly HashSet<ChatSessionView> _resumedSessions = [];
     private AppSettings _settings;
     private bool _isDarkTheme;
@@ -42,12 +46,15 @@ public partial class MainWindow : Window
     private bool _isRestoringChats;
     private bool _updatingModelControls;
     private System.Windows.Threading.DispatcherTimer? _themeTimer;
+    private WinForms.NotifyIcon? _notifyIcon;
+    private Window? _activeResponseWindow;
 
     public MainWindow()
     {
         InitializeComponent();
         LoadWindowIcon();
         _settings = LoadSettingsForStartup();
+        ApplyTrayNotificationSetting();
         _debugLogger.IsEnabled = _settings.EnableDebugLogging;
         _copilot = new CopilotChatService(_settingsStore, PromptForPermissionAsync, PromptForUserInputAsync, _debugLogger);
         _copilot.UsageUpdated += Copilot_UsageUpdated;
@@ -137,6 +144,7 @@ public partial class MainWindow : Window
         {
             SaveOpenChatsSafely(force: true, reason: "closed");
             await _copilot.DisposeAsync();
+            _notifyIcon?.Dispose();
         }
         catch
         {
@@ -208,6 +216,7 @@ public partial class MainWindow : Window
             _settingsStore.Save(_settings);
             _debugLogger.IsEnabled = _settings.EnableDebugLogging;
             UpdateMemoryCheckBox();
+            ApplyTrayNotificationSetting();
             ApplyThemeFromMode();
         }
     }
@@ -641,15 +650,28 @@ public partial class MainWindow : Window
         };
         if (persisted is not null)
         {
+            if (persisted.Messages.Count > 0)
+            {
+                _scrollToBottomAfterInitialRender.Add(chat);
+            }
+
             foreach (var message in persisted.Messages)
             {
+                if (message.Prompt is { IsAnswered: false } stalePrompt)
+                {
+                    stalePrompt.IsAnswered = true;
+                    stalePrompt.Answer = "Prompt expired";
+                    message.CompletedAt ??= DateTimeOffset.Now;
+                }
+
                 chat.Messages.Add(new ChatMessage
                 {
                     Id = string.IsNullOrWhiteSpace(message.Id) ? Guid.NewGuid().ToString("N") : message.Id,
                     Kind = message.Kind,
                     Content = message.Content,
                     CreatedAt = message.CreatedAt == default ? DateTimeOffset.Now : message.CreatedAt,
-                    CompletedAt = message.CompletedAt
+                    CompletedAt = message.CompletedAt,
+                    Prompt = message.Prompt
                 });
             }
         }
@@ -924,7 +946,8 @@ public partial class MainWindow : Window
                 Kind = message.Kind,
                 Content = message.Content,
                 CreatedAt = message.CreatedAt,
-                CompletedAt = message.CompletedAt
+                CompletedAt = message.CompletedAt,
+                Prompt = message.Prompt
             }).ToList()
         };
 
@@ -978,12 +1001,15 @@ public partial class MainWindow : Window
 
         var busySpinner = CreateTabBusySpinner();
         var typingIndicator = CreateTabTypingIndicator();
+        var inputRequiredIndicator = CreateTabInputRequiredIndicator();
         var isPending = tab.Tag is ChatSessionView { IsPending: true };
+        var inputRequired = tab.Tag is ChatSessionView { HasPendingUserInput: true };
         var isTyping = tab.Tag is ChatSessionView chat && IsTypingStatus(chat.LastStatus);
-        busySpinner.Visibility = isPending && !isTyping ? Visibility.Visible : Visibility.Collapsed;
-        typingIndicator.Visibility = isPending && isTyping ? Visibility.Visible : Visibility.Collapsed;
-        closeButton.Visibility = isPending ? Visibility.Collapsed : Visibility.Visible;
-        closeButton.IsEnabled = !isPending;
+        inputRequiredIndicator.Visibility = inputRequired ? Visibility.Visible : Visibility.Collapsed;
+        busySpinner.Visibility = isPending && !isTyping && !inputRequired ? Visibility.Visible : Visibility.Collapsed;
+        typingIndicator.Visibility = isPending && isTyping && !inputRequired ? Visibility.Visible : Visibility.Collapsed;
+        closeButton.Visibility = isPending || inputRequired ? Visibility.Collapsed : Visibility.Visible;
+        closeButton.IsEnabled = !isPending && !inputRequired;
 
         var closeSlot = new Grid
         {
@@ -994,6 +1020,7 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Children =
             {
+                inputRequiredIndicator,
                 typingIndicator,
                 busySpinner,
                 closeButton
@@ -1092,6 +1119,31 @@ public partial class MainWindow : Window
         return panel;
     }
 
+    private FrameworkElement CreateTabInputRequiredIndicator()
+    {
+        return new Border
+        {
+            Name = "TabInputRequiredIndicator",
+            Width = 20,
+            Height = 20,
+            Margin = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#F97316")),
+            ToolTip = "Input required",
+            Child = new TextBlock
+            {
+                Text = "?",
+                Foreground = Brushes.White,
+                FontSize = 13,
+                FontWeight = FontWeights.Bold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Center
+            },
+            Visibility = Visibility.Collapsed
+        };
+    }
+
     private static bool IsTypingStatus(string? status)
     {
         return status?.Contains("Writing response", StringComparison.OrdinalIgnoreCase) == true;
@@ -1116,30 +1168,39 @@ public partial class MainWindow : Window
         var spinner = closeSlot?.Children
             .OfType<Path>()
             .FirstOrDefault(path => path.Name == "TabBusySpinner");
+        var inputRequiredIndicator = closeSlot?.Children
+            .OfType<Border>()
+            .FirstOrDefault(border => border.Name == "TabInputRequiredIndicator");
         var closeButton = closeSlot?.Children
             .OfType<Button>()
             .FirstOrDefault(button => button.Name == "TabCloseButton");
         var isTyping = isBusy && IsTypingStatus(chat.LastStatus);
+        var inputRequired = chat.HasPendingUserInput;
+
+        if (inputRequiredIndicator is not null)
+        {
+            inputRequiredIndicator.Visibility = inputRequired ? Visibility.Visible : Visibility.Collapsed;
+        }
 
         if (typingIndicator is not null)
         {
-            typingIndicator.Visibility = isTyping ? Visibility.Visible : Visibility.Collapsed;
+            typingIndicator.Visibility = isTyping && !inputRequired ? Visibility.Visible : Visibility.Collapsed;
         }
 
         if (spinner is not null)
         {
-            spinner.Visibility = isBusy && !isTyping ? Visibility.Visible : Visibility.Collapsed;
+            spinner.Visibility = isBusy && !isTyping && !inputRequired ? Visibility.Visible : Visibility.Collapsed;
         }
 
         if (closeButton is not null)
         {
-            closeButton.Visibility = isBusy ? Visibility.Collapsed : Visibility.Visible;
-            closeButton.IsEnabled = !isBusy;
+            closeButton.Visibility = isBusy || inputRequired ? Visibility.Collapsed : Visibility.Visible;
+            closeButton.IsEnabled = !isBusy && !inputRequired;
         }
 
         if (tab.ContextMenu?.Items.OfType<MenuItem>().FirstOrDefault(item => item.Name == "CloseTabMenuItem") is { } closeItem)
         {
-            closeItem.IsEnabled = !isBusy;
+            closeItem.IsEnabled = !isBusy && !inputRequired;
         }
     }
 
@@ -1179,7 +1240,8 @@ public partial class MainWindow : Window
         menu.Items.Add(renameItem);
         var closeItem = new MenuItem { Header = "Close" };
         closeItem.Name = "CloseTabMenuItem";
-        closeItem.IsEnabled = tab.Tag is not ChatSessionView { IsPending: true };
+        closeItem.IsEnabled = tab.Tag is not ChatSessionView { IsPending: true } &&
+                              tab.Tag is not ChatSessionView { HasPendingUserInput: true };
         closeItem.Click += (_, _) => _ = CloseTabAsync(tab);
         menu.Items.Add(closeItem);
         return menu;
@@ -1350,6 +1412,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (message.Type.Equals("promptResponse", StringComparison.OrdinalIgnoreCase))
+        {
+            if (sourceChat is not null && !string.IsNullOrWhiteSpace(message.Id))
+            {
+                HandlePromptResponse(sourceChat, message.Id, message.Value ?? "", message.Mode ?? "choice");
+            }
+
+            return;
+        }
+
         var id = message.Id;
         if (string.IsNullOrWhiteSpace(id))
         {
@@ -1375,18 +1447,20 @@ public partial class MainWindow : Window
                 var id = root.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
                 var html = root.TryGetProperty("html", out var htmlProp) ? htmlProp.GetString() : null;
                 var htmlBase64 = root.TryGetProperty("htmlBase64", out var htmlBase64Prop) ? htmlBase64Prop.GetString() : null;
-                return new BrowserBridgeMessage(typeValue, id, html, htmlBase64);
+                var value = root.TryGetProperty("value", out var valueProp) ? valueProp.GetString() : null;
+                var mode = root.TryGetProperty("mode", out var modeProp) ? modeProp.GetString() : null;
+                return new BrowserBridgeMessage(typeValue, id, html, htmlBase64, value, mode);
             }
 
             return root.ValueKind == JsonValueKind.String
-                ? new BrowserBridgeMessage("open", root.GetString(), null, null)
+                ? new BrowserBridgeMessage("open", root.GetString(), null, null, null, null)
                 : null;
         }
         catch
         {
             try
             {
-                return new BrowserBridgeMessage("open", e.TryGetWebMessageAsString(), null, null);
+                return new BrowserBridgeMessage("open", e.TryGetWebMessageAsString(), null, null, null, null);
             }
             catch
             {
@@ -1412,49 +1486,290 @@ public partial class MainWindow : Window
         return message.Html;
     }
 
-    private sealed record BrowserBridgeMessage(string Type, string? Id, string? Html, string? HtmlBase64);
+    private sealed record BrowserBridgeMessage(string Type, string? Id, string? Html, string? HtmlBase64, string? Value, string? Mode);
 
-    private Task<PermissionPromptDecision> PromptForPermissionAsync(PermissionPrompt prompt)
+    private Task<PermissionPromptDecision> PromptForPermissionAsync(ChatSessionView chat, PermissionPrompt prompt)
     {
-        return Dispatcher.InvokeAsync(() =>
+        var promptId = $"permission-{Guid.NewGuid():N}";
+        var tcs = new TaskCompletionSource<PermissionPromptDecision>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Dispatcher.BeginInvoke(() =>
         {
-            var window = new PermissionPromptWindow(prompt) { Owner = this };
-            return window.ShowDialog() == true ? window.Decision : PermissionPromptDecision.Deny;
-        }).Task;
+            _pendingPermissionPrompts[promptId] = tcs;
+            _pendingPromptChats[promptId] = chat;
+            AddPromptMessage(chat, promptId, BuildPermissionPromptArticleText(prompt), new ChatPromptState
+            {
+                Type = "permission",
+                Choices = ["Deny", "AllowOnce", "AllowForSession", "SaveToSettings"],
+                AllowFreeform = false
+            });
+            ShowUserResponseNotification("Permission required", BuildPermissionNotificationText(prompt));
+        });
+        return tcs.Task;
     }
 
     [DllImport("user32.dll")]
     private static extern bool SetForegroundWindow(IntPtr hWnd);
 
-    private Task<UserInputPromptResult> PromptForUserInputAsync(UserInputPrompt prompt)
+    private Task<UserInputPromptResult> PromptForUserInputAsync(ChatSessionView chat, UserInputPrompt prompt)
     {
-        // Use TaskCompletionSource so the background caller can await the result
-        // without any dependency on WPF's DispatcherOperation.Task edge cases.
         var tcs = new TaskCompletionSource<UserInputPromptResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var promptId = $"ask-user-{Guid.NewGuid():N}";
         Dispatcher.BeginInvoke(() =>
         {
-            try
+            _pendingUserInputPrompts[promptId] = tcs;
+            _pendingPromptChats[promptId] = chat;
+            AddPromptMessage(chat, promptId, prompt.Question, new ChatPromptState
             {
-                var window = new UserInputPromptWindow(prompt);
-                // No Owner: WebView2's out-of-process HWND interferes with owned-window z-order.
-                // Topmost="True" is set in XAML; SetForegroundWindow forces keyboard focus.
-                window.Loaded += (_, _) =>
-                {
-                    var helper = new System.Windows.Interop.WindowInteropHelper(window);
-                    SetForegroundWindow(helper.Handle);
-                };
-                bool? result = window.ShowDialog();
-                tcs.SetResult(result == true
-                    ? new UserInputPromptResult(window.Answer, window.WasFreeform)
-                    : new UserInputPromptResult("", true));
-            }
-            catch (Exception ex)
-            {
-                _debugLogger.Log("PROMPT-DIALOG-ERROR", ex.ToString());
-                tcs.SetResult(new UserInputPromptResult("", true));
-            }
+                Type = "user-input",
+                Choices = prompt.Choices.ToList(),
+                AllowFreeform = prompt.AllowFreeform
+            });
+            ShowUserResponseNotification("Copilot needs your response", BuildUserInputNotificationText(prompt));
         });
         return tcs.Task;
+    }
+
+    private void AddPromptMessage(ChatSessionView chat, string promptId, string content, ChatPromptState promptState)
+    {
+        chat.Messages.Add(new ChatMessage
+        {
+            Id = promptId,
+            Kind = ChatMessageKind.Prompt,
+            Content = content,
+            Prompt = promptState
+        });
+        SetChatInputRequired(chat, true);
+        RenderChat(chat);
+        SaveOpenChats();
+    }
+
+    private void HandlePromptResponse(ChatSessionView chat, string promptId, string value, string mode)
+    {
+        var message = chat.Messages.FirstOrDefault(message => message.Id == promptId);
+        if (message?.Prompt is not { IsAnswered: false } promptState)
+        {
+            return;
+        }
+
+        value = value.Trim();
+        promptState.IsAnswered = true;
+        promptState.Answer = value;
+        promptState.WasFreeform = mode.Equals("freeform", StringComparison.OrdinalIgnoreCase);
+        message.CompletedAt = DateTimeOffset.Now;
+
+        if (_pendingPermissionPrompts.Remove(promptId, out var permissionTcs))
+        {
+            permissionTcs.TrySetResult(ParsePermissionDecision(value));
+        }
+        else if (_pendingUserInputPrompts.Remove(promptId, out var inputTcs))
+        {
+            inputTcs.TrySetResult(new UserInputPromptResult(value, promptState.WasFreeform));
+        }
+
+        _pendingPromptChats.Remove(promptId);
+        SetChatInputRequired(chat, HasPendingPrompt(chat));
+        RenderChat(chat);
+        SaveOpenChats();
+    }
+
+    private void SetChatInputRequired(ChatSessionView chat, bool isRequired)
+    {
+        chat.HasPendingUserInput = isRequired;
+        SetTabBusyIndicator(chat, chat.IsPending);
+    }
+
+    private bool HasPendingPrompt(ChatSessionView chat) =>
+        _pendingPromptChats.Any(pair => ReferenceEquals(pair.Value, chat));
+
+    private static PermissionPromptDecision ParsePermissionDecision(string value) =>
+        Enum.TryParse<PermissionPromptDecision>(value, ignoreCase: true, out var decision)
+            ? decision
+            : PermissionPromptDecision.Deny;
+
+    private void InitializeTrayNotifications()
+    {
+        if (_notifyIcon is not null)
+        {
+            return;
+        }
+
+        try
+        {
+            _notifyIcon = new WinForms.NotifyIcon
+            {
+                Icon = CreateTrayIcon(),
+                Text = "Copilot Chatbot",
+                Visible = true
+            };
+            _notifyIcon.BalloonTipClicked += (_, _) => ActivateUserResponseWindow();
+            _notifyIcon.Click += (_, _) => ActivateUserResponseWindow();
+        }
+        catch (Exception ex)
+        {
+            _debugLogger.Log("TRAY-NOTIFICATION-INIT-ERROR", ex.Message);
+        }
+    }
+
+    private void ApplyTrayNotificationSetting()
+    {
+        if (_settings.EnableTrayNotifications)
+        {
+            InitializeTrayNotifications();
+            return;
+        }
+
+        _notifyIcon?.Dispose();
+        _notifyIcon = null;
+    }
+
+    private static System.Drawing.Icon? CreateTrayIcon()
+    {
+        try
+        {
+            var resource = System.Windows.Application.GetResourceStream(
+                new Uri("pack://application:,,,/Assets/AppIcon.ico", UriKind.Absolute));
+            if (resource?.Stream is not null)
+            {
+                using var icon = new System.Drawing.Icon(resource.Stream);
+                return (System.Drawing.Icon)icon.Clone();
+            }
+        }
+        catch
+        {
+            // Fall through to the executable icon.
+        }
+
+        return System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "");
+    }
+
+    private void ShowUserResponseNotification(string title, string message, Window? responseWindow = null)
+    {
+        if (responseWindow is not null)
+        {
+            TrackActiveResponseWindow(responseWindow);
+        }
+        else
+        {
+            _activeResponseWindow = this;
+        }
+
+        try
+        {
+            if (_notifyIcon is null)
+            {
+                return;
+            }
+
+            _notifyIcon.BalloonTipTitle = title;
+            _notifyIcon.BalloonTipText = TruncateForBalloon(message);
+            _notifyIcon.BalloonTipIcon = WinForms.ToolTipIcon.Info;
+            _notifyIcon.ShowBalloonTip(8000);
+        }
+        catch (Exception ex)
+        {
+            _debugLogger.Log("TRAY-NOTIFICATION-SHOW-ERROR", ex.Message);
+        }
+    }
+
+    private void TrackActiveResponseWindow(Window responseWindow)
+    {
+        _activeResponseWindow = responseWindow;
+        responseWindow.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_activeResponseWindow, responseWindow))
+            {
+                _activeResponseWindow = null;
+            }
+        };
+    }
+
+    private void ActivateUserResponseWindow()
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            var window = _activeResponseWindow ?? this;
+            if (window.WindowState == WindowState.Minimized)
+            {
+                window.WindowState = WindowState.Normal;
+            }
+
+            window.Activate();
+            window.Topmost = true;
+            window.Topmost = false;
+
+            var helper = new System.Windows.Interop.WindowInteropHelper(window);
+            if (helper.Handle != IntPtr.Zero)
+            {
+                SetForegroundWindow(helper.Handle);
+            }
+        });
+    }
+
+    private static string BuildPermissionNotificationText(PermissionPrompt prompt)
+    {
+        var scope = !string.IsNullOrWhiteSpace(prompt.Host)
+            ? $"Network host: {prompt.Host}"
+            : !string.IsNullOrWhiteSpace(prompt.ToolName)
+                ? $"Tool: {prompt.ToolName}"
+                : !string.IsNullOrWhiteSpace(prompt.FileName)
+                    ? $"File or folder: {prompt.FileName}"
+                    : prompt.Commands.Count > 0
+                        ? $"Shell commands: {string.Join(", ", prompt.Commands.Select(command => command.Identifier))}"
+                        : !string.IsNullOrWhiteSpace(prompt.Command)
+                            ? "Shell command access"
+                            : "Copilot requested permission.";
+
+        return string.IsNullOrWhiteSpace(prompt.SessionTitle)
+            ? scope
+            : $"{prompt.SessionTitle}: {scope}";
+    }
+
+    private static string BuildUserInputNotificationText(UserInputPrompt prompt)
+    {
+        var suffix = prompt.Choices.Count > 0
+            ? $" ({prompt.Choices.Count} choice{(prompt.Choices.Count == 1 ? "" : "s")})"
+            : prompt.AllowFreeform
+                ? " (freeform answer)"
+                : "";
+        var text = prompt.Question + suffix;
+
+        return string.IsNullOrWhiteSpace(prompt.SessionTitle)
+            ? text
+            : $"{prompt.SessionTitle}: {text}";
+    }
+
+    private static string BuildPermissionPromptArticleText(PermissionPrompt prompt)
+    {
+        var lines = new List<string>
+        {
+            "Copilot requested permission.",
+            "",
+            $"Kind: {prompt.Kind}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(prompt.ToolName))
+            lines.Add($"Tool: {prompt.ToolName}");
+        if (!string.IsNullOrWhiteSpace(prompt.FileName))
+            lines.Add($"File or folder: {prompt.FileName}");
+        if (!string.IsNullOrWhiteSpace(prompt.Host))
+            lines.Add($"Network host: {prompt.Host}");
+        if (prompt.Commands.Count > 0)
+        {
+            lines.Add("Shell commands:");
+            lines.AddRange(prompt.Commands.Select(command =>
+                $"  - {command.Identifier}{(command.ReadOnly ? " (read-only)" : "")}"));
+        }
+        if (!string.IsNullOrWhiteSpace(prompt.Command))
+            lines.Add($"Command: {prompt.Command}");
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string TruncateForBalloon(string text)
+    {
+        const int maxLength = 240;
+        text = text.Replace("\r", " ").Replace("\n", " ").Trim();
+        return text.Length <= maxLength ? text : text[..(maxLength - 3)] + "...";
     }
 
     private ChatSessionView? CurrentChat => (ChatTabs.SelectedItem as TabItem)?.Tag as ChatSessionView;
@@ -1512,6 +1827,12 @@ public partial class MainWindow : Window
         if (!chat.IsPageInitialized)
         {
             chat.IsPageInitialized = true;
+            var shouldScrollToBottom = _scrollToBottomAfterInitialRender.Remove(chat);
+            if (shouldScrollToBottom)
+            {
+                ScrollToBottomAfterNextNavigation(chat);
+            }
+
             chat.Browser.NavigateToString(_htmlRenderer.RenderDocument(messages, _isDarkTheme));
             return;
         }
@@ -1590,7 +1911,7 @@ public partial class MainWindow : Window
                                 }
 
                                 if (oldOpen !== null) {
-                                    curDetails.open = oldOpen;
+                                    curDetails.open = next.hasAttribute('data-force-closed') ? false : oldOpen;
                                 }
                             } else {
                                 next.dataset.renderSig = patch.Signature;
@@ -1598,12 +1919,12 @@ public partial class MainWindow : Window
                                 node = next;
                                 if (oldOpen !== null) {
                                     var replacedDetails = node.querySelector('details');
-                                    if (replacedDetails) replacedDetails.open = oldOpen;
+                                    if (replacedDetails) replacedDetails.open = next.hasAttribute('data-force-closed') ? false : oldOpen;
                                 }
                                 Array.from(node.querySelectorAll('article[data-mid]')).forEach(function(article) {
                                     var details = article.querySelector('details');
                                     if (details && Object.prototype.hasOwnProperty.call(openStates, article.dataset.mid)) {
-                                        details.open = openStates[article.dataset.mid];
+                                        details.open = article.hasAttribute('data-force-closed') ? false : openStates[article.dataset.mid];
                                     }
                                 });
                             }
@@ -1648,6 +1969,21 @@ public partial class MainWindow : Window
 
     private bool IsLatestRender(ChatSessionView chat, long revision) =>
         _renderRevisions.GetValueOrDefault(chat) == revision;
+
+    private static void ScrollToBottomAfterNextNavigation(ChatSessionView chat)
+    {
+        void Handler(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+        {
+            chat.Browser.NavigationCompleted -= Handler;
+            _ = chat.Browser.ExecuteScriptAsync("""
+                requestAnimationFrame(() => {
+                  requestAnimationFrame(() => window.scrollTo(0, document.documentElement.scrollHeight));
+                });
+                """);
+        }
+
+        chat.Browser.NavigationCompleted += Handler;
+    }
 
     private static string BuildRenderSignature(ChatMessage message)
     {

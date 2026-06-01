@@ -10,6 +10,7 @@ public enum ChatMessageKind
     Reasoning,
     Intent,
     Tool,
+    Prompt,
     Error,
     System
 }
@@ -22,6 +23,17 @@ public sealed class ChatMessage
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.Now;
     /// <summary>Set when the response turn is fully received. Null while streaming or for user messages.</summary>
     public DateTimeOffset? CompletedAt { get; set; }
+    public ChatPromptState? Prompt { get; set; }
+}
+
+public sealed class ChatPromptState
+{
+    public string Type { get; set; } = "";
+    public List<string> Choices { get; set; } = [];
+    public bool AllowFreeform { get; set; }
+    public bool IsAnswered { get; set; }
+    public string Answer { get; set; } = "";
+    public bool WasFreeform { get; set; }
 }
 
 public sealed record McpServerInfo(string Name, string Status, IReadOnlyList<string> Tools);
@@ -40,6 +52,7 @@ public sealed class ChatSessionView
     public bool IsPageInitialized { get; set; }
     public bool IsPending { get; set; }
     public bool HasUnreadResponse { get; set; }
+    public bool HasPendingUserInput { get; set; }
     public bool IsApplyingBufferedUpdates { get; set; }
     public string? SystemPrompt { get; set; }
     public string? SelectedModelId { get; set; }
@@ -78,4 +91,5 @@ public sealed class PersistedChatMessage
     public string Content { get; set; } = "";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+    public ChatPromptState? Prompt { get; set; }
 }
